@@ -3,16 +3,7 @@ import BattleBlocksNFT from "../../../contracts/nft/BattleBlocksNFT.cdc"
 import FungibleToken from "../../../contracts/standard/FungibleToken.cdc"
 import NonFungibleToken from "../../../contracts/standard/NonFungibleToken.cdc"
 
-/// Adds the labeled child account as a Child Account in the parent accounts'
-/// BattleBlocksAccountManager resource. The parent maintains an AuthAccount Capability
-/// on the child's account. Requires transaction be signed by both parties so that
-/// the GamePlayer resource can be moved from the child's to the parent's account,
-/// linked and a DelegatedGamePlayer Capability granted to the child through the
-/// parent's BattleBlocksAccountManager to the child's BattleBlocksAccountTag.
-///
-/// NOTE: Assumes that the child account has a GamePlayer & BattleBlocksAccountTag configured
-/// and the parent account does not have a GamePlayer stored 
-///
+
 transaction {
 
     let authAccountCap: Capability<&AuthAccount>
