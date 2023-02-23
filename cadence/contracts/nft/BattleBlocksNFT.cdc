@@ -32,10 +32,11 @@ pub contract BattleBlocksNFT: NonFungibleToken {s
     pub event Burned(id: UInt64, from: Address?)
 
 
-    /// Storage and Public Paths
+    /// Storage, Private and Public Paths
     pub let CollectionStoragePath: StoragePath
     pub let CollectionPublicPath: PublicPath
     pub let MinterStoragePath: StoragePath
+    pub let ProviderPrivatePath: PrivatePath
 
     /// The core resource that represents a Non Fungible Token. 
     /// New instances will be created using the NFTMinter resource
@@ -222,6 +223,7 @@ pub contract BattleBlocksNFT: NonFungibleToken {s
         self.CollectionStoragePath = /storage/battleBlocksNFTCollection
         self.CollectionPublicPath = /public/battleBlocksNFTCollection
         self.MinterStoragePath = /storage/battleBlocksNFTMinter
+        self.ProviderPrivatePath = /private/battleBlocksNFTCollectionProvider
 
         // Create a Collection resource and save it to storage
         let collection <- create Collection()
