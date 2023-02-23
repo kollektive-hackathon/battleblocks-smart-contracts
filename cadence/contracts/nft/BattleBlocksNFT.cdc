@@ -10,7 +10,6 @@
 */
 
 import NonFungibleToken from "../standard/NonFungibleToken.cdc"
-import MetadataViews from "../standard/MetadataViews.cdc"
 
 pub contract BattleBlocksNFT: NonFungibleToken {s
 
@@ -27,7 +26,7 @@ pub contract BattleBlocksNFT: NonFungibleToken {s
     pub event Deposit(id: UInt64, to: Address?)
 
     /// The event that is emitted when an NFT is minted
-    pub event Minted(id: UInt64, name: String, description: String, thumbnail: String)
+    pub event Minted(id: UInt64, name: String)
 
     /// The event that is emitted when an NFT is destroyed
     pub event Burned(id: UInt64, from: Address?)
@@ -42,114 +41,28 @@ pub contract BattleBlocksNFT: NonFungibleToken {s
     /// New instances will be created using the NFTMinter resource
     /// and stored in the Collection resource
     ///
-    pub resource NFT: NonFungibleToken.INFT, MetadataViews.Resolver {
+    pub resource NFT: NonFungibleToken.INFT {
         
         /// The unique ID that each NFT has
         pub let id: UInt64
 
         /// Metadata fields
         pub let name: String
-        pub let description: String
-        pub let thumbnail: String
         access(self) let metadata: {String: AnyStruct}
     
         init(
             id: UInt64,
             name: String,
-            description: String,
-            thumbnail: String,
             metadata: {String: AnyStruct},
         ) {
             self.id = id
             self.name = name
-            self.description = description
-            self.thumbnail = thumbnail
             self.metadata = metadata
         }
 
         /// Returns the nft's metadata field
         pub fun getMetadata(): {String: AnyStruct} {
             return self.metadata
-        }
-
-
-        /// Function that returns all the Metadata Views implemented by a Non Fungible Token
-        ///
-        /// @return An array of Types defining the implemented views. This value will be used by
-        ///         developers to know which parameter to pass to the resolveView() method.
-        ///
-        pub fun getViews(): [Type] {
-            return [
-                Type<MetadataViews.Display>(),
-                Type<MetadataViews.Editions>(),
-                Type<MetadataViews.ExternalURL>(),
-                Type<MetadataViews.NFTCollectionData>(),
-                Type<MetadataViews.NFTCollectionDisplay>(),
-                Type<MetadataViews.Serial>()
-            ]
-        }
-
-        /// Function that resolves a metadata view for this token.
-        ///
-        /// @param view: The Type of the desired view.
-        /// @return A structure representing the requested view.
-        ///
-        pub fun resolveView(_ view: Type): AnyStruct? {
-            switch view {
-                case Type<MetadataViews.Display>():
-                    return MetadataViews.Display(
-                        name: self.name,
-                        description: self.description,
-                        thumbnail: MetadataViews.HTTPFile(
-                            url: self.thumbnail
-                        )
-                    )
-                case Type<MetadataViews.Editions>():
-                    // There is no max number of NFTs that can be minted from this contract
-                    // so the max edition field value is set to nil
-                    let editionInfo = MetadataViews.Edition(name: "Example NFT Edition", number: self.id, max: nil)
-                    let editionList: [MetadataViews.Edition] = [editionInfo]
-                    return MetadataViews.Editions(
-                        editionList
-                    )
-                case Type<MetadataViews.Serial>():
-                    return MetadataViews.Serial(
-                        self.id
-                    )
-                case Type<MetadataViews.ExternalURL>():
-                    return MetadataViews.ExternalURL("https://example-nft.onflow.org/".concat(self.id.toString()))
-                case Type<MetadataViews.NFTCollectionData>():
-                    return MetadataViews.NFTCollectionData(
-                        storagePath: BattleBlocksNFT.CollectionStoragePath,
-                        publicPath: BattleBlocksNFT.CollectionPublicPath,
-                        providerPath: /private/battleBlocksNFTCollection,
-                        publicCollection: Type<&BattleBlocksNFT.Collection{BattleBlocksNFT.BattleBlocksNFTCollectionPublic}>(),
-                        publicLinkedType: Type<&BattleBlocksNFT.Collection{BattleBlocksNFT.BattleBlocksNFTCollectionPublic,NonFungibleToken.CollectionPublic,NonFungibleToken.Receiver,MetadataViews.ResolverCollection}>(),
-                        providerLinkedType: Type<&BattleBlocksNFT.Collection{BattleBlocksNFT.BattleBlocksNFTCollectionPublic,NonFungibleToken.CollectionPublic,NonFungibleToken.Provider,MetadataViews.ResolverCollection}>(),
-                        createEmptyCollectionFunction: (fun (): @NonFungibleToken.Collection {
-                            return <-BattleBlocksNFT.createEmptyCollection()
-                        })
-                    )
-                case Type<MetadataViews.NFTCollectionDisplay>():
-                    let media = MetadataViews.Media(
-                        file: MetadataViews.HTTPFile(
-                            url: "https://assets.website-files.com/5f6294c0c7a8cdd643b1c820/5f6294c0c7a8cda55cb1c936_Flow_Wordmark.svg"
-                        ),
-                        mediaType: "image/svg+xml"
-                    )
-                    return MetadataViews.NFTCollectionDisplay(
-                        name: "The Example Collection",
-                        description: "This collection is used as an example to help you develop your next Flow NFT.",
-                        externalURL: MetadataViews.ExternalURL("https://example-nft.onflow.org"),
-                        squareImage: media,
-                        bannerImage: media,
-                        socials: {
-                            "twitter": MetadataViews.ExternalURL("https://twitter.com/flow_blockchain")
-                        }
-                    )
-
-            }
-            return nil
         }
 
         destroy() {
@@ -175,7 +88,7 @@ pub contract BattleBlocksNFT: NonFungibleToken {s
     /// In order to be able to manage NFTs any account will need to create
     /// an empty collection first
     ///
-    pub resource Collection: BattleBlocksNFTCollectionPublic, NonFungibleToken.Provider, NonFungibleToken.Receiver, NonFungibleToken.CollectionPublic, MetadataViews.ResolverCollection {
+    pub resource Collection: BattleBlocksNFTCollectionPublic, NonFungibleToken.Provider, NonFungibleToken.Receiver, NonFungibleToken.CollectionPublic {
         // dictionary of NFT conforming tokens
         // NFT is a resource type with an `UInt64` ID field
         pub var ownedNFTs: @{UInt64: NonFungibleToken.NFT}
@@ -248,19 +161,6 @@ pub contract BattleBlocksNFT: NonFungibleToken {s
             return nil
         }
 
-        /// Gets a reference to the NFT only conforming to the `{MetadataViews.Resolver}`
-        /// interface so that the caller can retrieve the views that the NFT
-        /// is implementing and resolve them
-        ///
-        /// @param id: The ID of the wanted NFT
-        /// @return The resource reference conforming to the Resolver interface
-        /// 
-        pub fun borrowViewResolver(id: UInt64): &AnyResource{MetadataViews.Resolver} {
-            let nft = (&self.ownedNFTs[id] as auth &NonFungibleToken.NFT?)!
-            let battleBlocksNFT = nft as! &BattleBlocksNFT.NFT
-            return battleBlocksNFT as &AnyResource{MetadataViews.Resolver}
-        }
-
         destroy() {
             destroy self.ownedNFTs
         }
@@ -290,8 +190,6 @@ pub contract BattleBlocksNFT: NonFungibleToken {s
         pub fun mintNFT(
             recipient: &{NonFungibleToken.CollectionPublic},
             name: String,
-            description: String,
-            thumbnail: String
         ) {
             let metadata: {String: AnyStruct} = {}
             let currentBlock = getCurrentBlock()
@@ -303,13 +201,11 @@ pub contract BattleBlocksNFT: NonFungibleToken {s
             var newNFT <- create NFT(
                 id: BattleBlocksNFT.totalSupply,
                 name: name,
-                description: description,
-                thumbnail: thumbnail,
                 metadata: metadata,
             )
 
             // emit Minted event for the new nft
-            emit Minted(id: BattleBlocksNFT.totalSupply, name: name, description: description, thumbnail: thumbnail)
+            emit Minted(id: BattleBlocksNFT.totalSupply, name: name)
 
             // deposit it in the recipient's account using their reference
             recipient.deposit(token: <-newNFT)
@@ -332,7 +228,7 @@ pub contract BattleBlocksNFT: NonFungibleToken {s
         self.account.save(<-collection, to: self.CollectionStoragePath)
 
         // create a public capability for the collection
-        self.account.link<&BattleBlocksNFT.Collection{NonFungibleToken.CollectionPublic, BattleBlocksNFT.BattleBlocksNFTCollectionPublic, MetadataViews.ResolverCollection}>(
+        self.account.link<&BattleBlocksNFT.Collection{NonFungibleToken.CollectionPublic, BattleBlocksNFT.BattleBlocksNFTCollectionPublic}>(
             self.CollectionPublicPath,
             target: self.CollectionStoragePath
         )
@@ -344,3 +240,4 @@ pub contract BattleBlocksNFT: NonFungibleToken {s
         emit ContractInitialized()
     }
 }
+ 
