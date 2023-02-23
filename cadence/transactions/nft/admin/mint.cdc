@@ -1,6 +1,5 @@
 import NonFungibleToken from "../../../contracts/standard/NonFungibleToken.cdc"
 import BattleBlocksNFT from "../../../contracts/nft/BattleBlocksNFT.cdc"
-import MetadataViews from "../../../contracts/standard/MetadataViews.cdc"
 
 /// This script uses the NFTMinter resource to mint a new NFT
 /// It must be run with the account that has the minter resource
@@ -9,8 +8,6 @@ import MetadataViews from "../../../contracts/standard/MetadataViews.cdc"
 transaction(
     recipient: Address,
     name: String,
-    description: String,
-    thumbnail: String,
     metdata: {String: AnyStruct}
 ) {
 
@@ -42,9 +39,7 @@ transaction(
         // Mint the NFT and deposit it to the recipient's collection
         self.minter.mintNFT(
             recipient: self.recipientCollectionRef,
-            name: name,
-            description: description,
-            thumbnail: thumbnail
+            name: name
         )
     }
 

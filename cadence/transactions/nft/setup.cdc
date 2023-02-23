@@ -1,6 +1,5 @@
 import NonFungibleToken from "../../contracts/standard/NonFungibleToken.cdc"
 import BattleBlocksNFT from "../../contracts/nft/BattleBlocksNFT.cdc"
-import MetadataViews from "../../contracts/standard/MetadataViews.cdc"
 
 /// This transaction is what an account would run
 /// to set itself up to receive NFTs
@@ -20,7 +19,7 @@ transaction {
         signer.save(<-collection, to: BattleBlocksNFT.CollectionStoragePath)
 
         // create a public capability for the collection
-        signer.link<&{NonFungibleToken.CollectionPublic, BattleBlocksNFT.BattleBlocksNFTCollectionPublic, MetadataViews.ResolverCollection}>(
+        signer.link<&{NonFungibleToken.CollectionPublic, BattleBlocksNFT.BattleBlocksNFTCollectionPublic}>(
             BattleBlocksNFT.CollectionPublicPath,
             target: BattleBlocksNFT.CollectionStoragePath
         )
