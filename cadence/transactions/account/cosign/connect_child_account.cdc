@@ -3,7 +3,6 @@ import BattleBlocksNFT from "../../../contracts/nft/BattleBlocksNFT.cdc"
 import FungibleToken from "../../../contracts/standard/FungibleToken.cdc"
 import NonFungibleToken from "../../../contracts/standard/NonFungibleToken.cdc"
 
-
 transaction {
 
     let authAccountCap: Capability<&AuthAccount>
