@@ -20,9 +20,12 @@ BattleBlocksGame is the game smart contract for BattleBlocks. It provides the lo
 
 The contracts in this repository are written in Cadence, the programming language for the Flow blockchain. To deploy and test the contracts, you will need to have the Flow CLI and emulator installed on your local machine.
 
-## Deployment
+## Deployments
 
-To deploy the contracts to the Flow network, you will need access to a Flow account with sufficient funds. You can deploy the contracts using the `flow-cli` command-line tool, or any other preferred method.
+| Contract             | Address            | Environment |
+| -------------------- | ------------------ | ----------- |
+| BattleBlocksNFT      | 0xf95724cf2202cd00 | Testnet     |
+| BattleBlocksAccounts | 0xf95724cf2202cd00 | Testnet     |
 
 ## License
 
