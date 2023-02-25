@@ -9,8 +9,8 @@ pub contract BattleBlocksGame {
     pub let GamePlayerPublicPath: PublicPath
     pub let GamePlayerPrivatePath: PrivatePath
 
-    pub let MatchStorageBasePathString: String
-    pub let MatchPrivateBasePathString: String
+    pub let GameStorageBasePathString: String
+    pub let GamePrivateBasePathString: String
 
     //--------------//
 
@@ -50,9 +50,16 @@ pub contract BattleBlocksGame {
         coordinateY: UInt64
     )
 
-    pub event NewMatchCreated(gameName: String, matchID: UInt64, creatorID: UInt64)
+    pub event NewGameCreated(
+        gameID: UInt64,
+        creatorID: UInt64,
+        creatorAddress: Address,
+        wager: UFix64,
+    )
 
     pub event PlayerSignedUpForMatch(gameName: String, matchID: UInt64, addedPlayerID: UInt64)
+
+    pub event PlayerAddedToGame(gameID: UInt64, addedPlayerID: UInt64)
 
     pub event MatchOver(
         gameName: String,
@@ -252,12 +259,39 @@ pub contract BattleBlocksGame {
 
     pub resource interface GamePlayerPublic {
         pub let id: UInt64
-        pub fun addMatchLobbyActionsCapability(
-            matchID: UInt64,
+        pub fun addGameActionsCapability(
+            gameID: UInt64,
             _ cap: Capability<&{GameActions}>
         )
+        pub fun getGames(): [UInt64]
+        pub fun getPlayers(): [UInt64]
+    }
+
+    pub resource interface DelegatedGamePlayer {
+        pub let id: UInt64
+        pub fun getGamePlayerIDRef(): &{GamePlayerID}
         pub fun getMatchesInLobby(): [UInt64]
         pub fun getMatchesInPlay(): [UInt64]
+        pub fun getMatchLobbyCaps(): {UInt64: Capability<&{GameActions}>}
+        pub fun getMatchPlayerCaps(): {UInt64: Capability<&{PlayerActions}>}
+        pub fun deleteLobbyActionsCapability(matchID: UInt64)
+        pub fun deletePlayerActionsCapability(matchID: UInt64)
+        pub fun createMatch(
+            multiPlayer: Bool,
+            matchTimeLimit: UFix64,
+            nft: @AnyResource{NonFungibleToken.INFT},
+            receiverCap: Capability<&{NonFungibleToken.Receiver}>
+        ): UInt64
+        pub fun signUpForMatch(matchID: UInt64)
+        pub fun depositNFTToMatchEscrow(
+            nft: @AnyResource{NonFungibleToken.INFT, DynamicNFT.Dynamic},
+            matchID: UInt64,
+            receiverCap: Capability<&{NonFungibleToken.Receiver}>
+        )
+        pub fun submitMoveToMatch(matchID: UInt64, move: Moves)
+        pub fun addPlayerToMatch(matchID: UInt64, gamePlayerRef: &AnyResource{GamePlayerPublic})
+        pub fun resolveMatchByID(_ id: UInt64)
+        pub fun addMatchLobbyActionsCapability(matchID: UInt64, _ cap: Capability<&{MatchLobbyActions}>)
     }
 
     //--------------------//
@@ -270,21 +304,11 @@ pub contract BattleBlocksGame {
         access(self) let prizePool: @FlowToken.Vault
         access(contract) var gamePlayerIDs: {UInt8: {Address: UInt64}}
 
-        init(
-            wager: @FlowToken.Vault,
-            playerAMerkleRoot: [UInt8],
-            gamePlayerIDRef: &{GamePlayerID}
-            ) {
-            self.data = GameData(
-                wager: wager.balance,
-                playerA: gamePlayerIDRef.owner?.address!,
-                playerAMerkleRoot: playerAMerkleRoot
-                )
-            self.prizePool <- wager
+        init(data: GameData) {
+            self.data = data
             self.id = self.uuid
             self.gamePlayerIDs = {}
-            let gamePlayerIDtoAddress = {gamePlayerIDRef.owner?.address!: gamePlayerIDRef.id}
-            self.gamePlayerIDs.insert(key: 1, gamePlayerIDtoAddress)
+            self.prizePool <- FlowToken.createEmptyVault() as! @FlowToken.Vault
         }
 
         pub fun getGamePlayerIds(): {UInt8: {Address: UInt64}} {
@@ -526,42 +550,6 @@ pub contract BattleBlocksGame {
         }
     }
 
-    //-------------------//
-
-    //-----Public-----//
-
-    //----------------//
-
-    /// A resource interface allowing a user to delegate use of their GamePlayer
-    /// via Capability
-    ///
-    pub resource interface DelegatedGamePlayer {
-        pub let id: UInt64
-        pub fun getGamePlayerIDRef(): &{GamePlayerID}
-        pub fun getMatchesInLobby(): [UInt64]
-        pub fun getMatchesInPlay(): [UInt64]
-        pub fun getMatchLobbyCaps(): {UInt64: Capability<&{GameActions}>}
-        pub fun getMatchPlayerCaps(): {UInt64: Capability<&{PlayerActions}>}
-        pub fun deleteLobbyActionsCapability(matchID: UInt64)
-        pub fun deletePlayerActionsCapability(matchID: UInt64)
-        pub fun createMatch(
-            multiPlayer: Bool,
-            matchTimeLimit: UFix64,
-            nft: @AnyResource{NonFungibleToken.INFT},
-            receiverCap: Capability<&{NonFungibleToken.Receiver}>
-        ): UInt64
-        pub fun signUpForMatch(matchID: UInt64)
-        pub fun depositNFTToMatchEscrow(
-            nft: @AnyResource{NonFungibleToken.INFT, DynamicNFT.Dynamic},
-            matchID: UInt64,
-            receiverCap: Capability<&{NonFungibleToken.Receiver}>
-        )
-        pub fun submitMoveToMatch(matchID: UInt64, move: Moves)
-        pub fun addPlayerToMatch(matchID: UInt64, gamePlayerRef: &AnyResource{GamePlayerPublic})
-        pub fun resolveMatchByID(_ id: UInt64)
-        pub fun addMatchLobbyActionsCapability(matchID: UInt64, _ cap: Capability<&{MatchLobbyActions}>)
-    }
-
     pub resource GamePlayer : GamePlayerID, GamePlayerPublic {
         pub let id: UInt64
         access(self) let gameCapabilities: {UInt64: Capability<&{GameActions}>}
@@ -604,7 +592,15 @@ pub contract BattleBlocksGame {
         pub fun createMatch(wager: @FlowToken.Vault, playerAMerkleRoot: [UInt8]): UInt64 {
             let gamePlayerIDRef = self.getGamePlayerIDRef()
 
-            let newGame <- create Game(data: game)
+            let stake = wager.balance
+
+            let data = GameData(
+                wager: wager.balance,
+                playerA: gamePlayerIDRef.owner?.address!,
+                playerAMerkleRoot: playerAMerkleRoot
+            )
+
+            let newGame <- create Game(data: data)
         
             let newGameID = newGame.id
             
@@ -639,327 +635,96 @@ pub contract BattleBlocksGame {
                 .borrow()
                 ?? panic("Could not borrow reference to GameActions")
 
-            let playerActionsCap: Capability<&{PlayerActions}> = gameActionsRef.joinGame(wager: <- wager, merkleRoot: merkleRoot, gamePlayerIDRef: gamePlayerIDRef)
+            let playerActionsCap: Capability<&{PlayerActions}> = gameActionsRef.joinGame(wager: <- wager, merkleRoot: playerAMerkleRoot, gamePlayerIDRef: gamePlayerIDRef)
                     
-            // Add that Capability to the GamePlayer's mapping & remove from
-            // mapping of MatchLobbyCapabilities
-            self.matchPlayerCapabilities.insert(key: matchID, playerActionsCap)
-            self.matchLobbyCapabilities.remove(key: matchID)
-                
-            // Get the GameActions Capability from this GamePlayer's mapping
-            let gameActionsCap: Capability<&{GameActions}> = self.gameCapabilities[newGameID]!
-            let gameActionsRef = gameActionsCap
-                .borrow()
-                ?? panic("Could not borrow reference to GamePlayerActions")
+            self.playerCapabilities.insert(key: newGameID, playerActionsCap)
+            self.gameCapabilities.remove(key: newGameID)
 
-
-            let playerActionsCap: Capability<&{PlayerActions}> = gameActionsRef
-    
-            // Add that Capability to the GamePlayer's mapping & remove from
-            // mapping of MatchLobbyCapabilities
-            self.matchPlayerCapabilities.insert(key: matchID, playerActionsCap)
-            self.matchLobbyCapabilities.remove(key: matchID)
-
-            // Remove the MatchLobbyActions now that the NFT has been escrowed & return the Match.id
-            self.matchLobbyCapabilities.remove(key: newMatchID)
-
-
-
-            emit NewMatchCreated(
-                gameName: RockPaperScissorsGame.name,
-                matchID: newMatchID,
+            emit NewGameCreated(
+                gameID: newGameID,
                 creatorID: self.id,
-                isMultiPlayer: multiPlayer
+                creatorAddress: self.owner?.address!,
+                wager: stake,
             )
-            return newMatchID
+
+            return newGameID
         }
 
-        pub fun signUpForGame(gameID: UInt64) {
+        pub fun submitMoveToGame(gameID: UInt64, coordinates: Coordinates, proof: [[UInt8]]?, reveal: Reveal?) {
+            pre {
+                self.playerCapabilities.containsKey(gameID):
+                    "Player does not have the ability to play this Game!"
+                self.playerCapabilities[gameID]!.check():
+                    "Problem with the PlayerActions Capability for given Game!"
+            }
+            let matchRef = self.playerCapabilities[gameID]!.borrow()!
+            let gamePlayerIDRef = self.getGamePlayerIDRef()
+            matchRef.submitMove(coordinates: coordinates, gamePlayerIDRef: gamePlayerIDRef, proof: proof, reveal: reveal)
+        }
 
-            // Derive path to capability
-            let gamePrivatePath = PrivatePath(identifier: BattleBlocksGame
-                .GamePrivateBasePathString.concat(gameID.toString()))!
-
-            // Get the Capability
-            let matchLobbyActionsCap = BattleBlocksGame.account
+        pub fun addPlayerToGame(gameID: UInt64, gamePlayerRef: &AnyResource{GamePlayerPublic}) {
+            let gamePrivatePath = BattleBlocksGame.getGamePrivatePath(gameID)
+            let gameActionsCap: Capability<&AnyResource{GameActions}> = BattleBlocksGame.account
                 .getCapability<&{GameActions}>(gamePrivatePath)
 
-            // Ensure Capability is not nil
             assert(
-                matchLobbyActionsCap.check(),
-                message: "Not able to retrieve GameActions Capability for given gameID!"
+                gameActionsCap.check(),
+                message: "Not able to retrieve GamePlayerActions Capability for given gameID"
             )
 
-            // Add it to the mapping
-            self.gameCapabilities.insert(key: gameID, gameActionsCap)
-
-            emit PlayerSignedUpForMatch(matchID: matchID, addedPlayerID: self.id)
+            gamePlayerRef.addGameActionsCapability(gameID: gameID, gameActionsCap)
         }
 
-        
-
-        /// Allows the GamePlayer to submit a move to the provided Match.id
-        ///
-        /// @param matchID: Match.id of the Match into which the move will be submitted
-        /// @param move: The move to be played
-        ///
-        pub fun submitMoveToMatch(matchID: UInt64, move: Moves) {
+        pub fun addGameActionsCapability(gameID: UInt64, _ cap: Capability<&{GameActions}>) {
             pre {
-                self.matchPlayerCapabilities.containsKey(matchID):
-                    "Player does not have the ability to play this Match!"
-                self.matchPlayerCapabilities[matchID]!.check():
-                    "Problem with the MatchPlayerActions Capability for given Match!"
-            }
-            let matchRef = self.matchPlayerCapabilities[matchID]!.borrow()!
-            let gamePlayerIDRef = self.getGamePlayerIDRef()
-            matchRef.submitMove(move: move, gamePlayerIDRef: gamePlayerIDRef)
-        }
-
-        /// Adds the referenced GamePlayer to the Match defined by the given Match.id by retrieving
-        /// the associated Match's MatchPlayerActions Capability and passing it as a parameter to
-        /// GamePlayerPublic.addMatchPlayerActionsCapability() along with the Match.id
-        ///
-        /// @param matchID: The id of the associated Match
-        /// @param gamePlayerRef: Reference to GamePlayerPublic that will receive
-        /// a MatchPlayerResource Capability
-        ///
-        pub fun addPlayerToMatch(matchID: UInt64, gamePlayerRef: &AnyResource{GamePlayerPublic}) {
-            // Derive match's private path from matchID
-            let matchPrivatePath = RockPaperScissorsGame.getGamePrivatePath(matchID)
-            // Get the capability
-            let matchLobbyActionsCap: Capability<&AnyResource{MatchLobbyActions}> = RockPaperScissorsGame.account
-                .getCapability<&{MatchLobbyActions}>(matchPrivatePath)
-
-            // Ensure we actually got the Capability we need
-            assert(
-                matchLobbyActionsCap.check(),
-                message: "Not able to retrieve MatchPlayerActions Capability for given matchID"
-            )
-
-            // Add it to the player's matchPlayerCapabilities
-            gamePlayerRef.addMatchLobbyActionsCapability(matchID: matchID, matchLobbyActionsCap)
-        }
-
-        /// This method allows a player to call for a match to be resolved. Note that the called 
-        /// method Match.resolveMatch() requires that both moves be submitted for resolution to occur
-        /// and that the method be called at least one block after the last move was submitted.
-        ///
-        /// @param id: The id of the Match to be resolved.
-        ///
-        pub fun resolveMatchByID(_ id: UInt64) {
-            pre {
-                self.matchPlayerCapabilities.containsKey(id):
-                    "Player does not have the ability to play this Match!"
-                self.matchPlayerCapabilities[id]!.check():
-                    "Problem with the MatchPlayerActions Capability for given Match!"
-            }
-            let matchRef = self.matchPlayerCapabilities[id]!.borrow()!
-            let gamePlayerIDRef = self.getGamePlayerIDRef()
-            matchRef.resolveMatch()
-        }
-
-        /** --- GamePlayerPublic --- */
-
-        /// Allows others to add MatchPlayerActions Capabilities to their mapping for ease of Match setup.
-        ///
-        /// @param matchID: The id associated with the MatchPlayerActions the GamePlayer is being given access
-        /// @param cap: The MatchPlayerActions Capability for which the GamePlayer is being given access
-        ///
-        pub fun addMatchLobbyActionsCapability(matchID: UInt64, _ cap: Capability<&{MatchLobbyActions}>) {
-            pre {
-                !self.matchLobbyCapabilities.containsKey(matchID) && !self.matchPlayerCapabilities.containsKey(matchID):
-                    "Player alpending has capability for this Match!"
+                !self.gameCapabilities.containsKey(gameID) && !self.playerCapabilities.containsKey(gameID):
+                    "Player alpending has capability for this Game!"
             }
             post {
-                self.matchLobbyCapabilities.containsKey(matchID): "Capability for match has not been saved into player"
+                self.gameCapabilities.containsKey(gameID): "Capability for game has not been saved into player"
             }
 
-            self.matchLobbyCapabilities.insert(key: matchID, cap)
-            // Event that could be used to notify player they were added
-            emit PlayerAddedToMatch(gameName: RockPaperScissorsGame.name, matchID: matchID, addedPlayerID: self.id)
+            self.gameCapabilities.insert(key: gameID, cap)
+            emit PlayerAddedToGame(gameID: gameID, addedPlayerID: self.id)
         }
     }
 
-    /** --- Contract helper functions --- */
+    //-------------------//
 
-    /// Getter to identify the contract's automated GamePlayer.id
-    ///
-    /// @return the id of the contract's GamePlayer used for singleplayer Matches
-    ///    
-    pub fun getAutomatedPlayerID(): UInt64 {
-        return self.automatedGamePlayer.id
-    }
+    //-----Public-----//
 
-    /// Getter to identify the contract's dummyNFTID
-    ///
-    /// @return the contract's dummyNFTID used for singleplayer Matches
-    ///
-    pub fun getDummyNFTID(): UInt64 {
-        return self.dummyNFTID
-    }
-
-    /// Create a GamePlayer resource
-    ///
-    /// @return a fresh GamePlayer resource
-    ///
     pub fun createGamePlayer(): @GamePlayer {
         return <- create GamePlayer()
     }
 
-    /// Method to determine outcome of a RockPaperScissors with given moves
-    /// Exposing game logic allows for some degree of composability with other
-    /// games and match types
-    ///
-    /// @param moves: a mapping of GamePlayer.id to Moves (rock, paper, or scissors)
-    /// with the expectation that there are exactly two entries
-    ///
-    /// @return the id of the winning GamePlayer or nil if result is a tie
-    ///
-    pub fun determineRockPaperScissorsWinner(moves: {UInt64: SubmittedMove}): UInt64? {
-        pre {
-            moves.length == 2: "RockPaperScissors requires two moves"
-        }
-        
-        let player1 = moves.keys[0]
-        let player2 = moves.keys[1]
-
-        // Choose one move to compare against other
-        switch moves[player1]!.move {
-            case RockPaperScissorsGame.Moves.rock:
-                if moves[player2]!.move == RockPaperScissorsGame.Moves.paper {
-                    return player2
-                } else if moves[player2]!.move == RockPaperScissorsGame.Moves.scissors {
-                    return player1
-                }
-            case RockPaperScissorsGame.Moves.paper:
-                if moves[player2]!.move == RockPaperScissorsGame.Moves.rock {
-                    return player1
-                } else if moves[player2]!.move == RockPaperScissorsGame.Moves.scissors {
-                    return player2
-                }
-            case RockPaperScissorsGame.Moves.scissors:
-                if moves[player2]!.move == RockPaperScissorsGame.Moves.rock {
-                    return player2
-                } else if moves[player2]!.move == RockPaperScissorsGame.Moves.paper {
-                    return player1
-                }
-        }
-        // If they played the same move, it's a tie -> return nil
-        return nil
-    }
-
-    /// Get GamingMetadataViews.BasicWinLoss for a certain NFT 
-    ///
-    /// @param: nftUUID: uuid of associated NFT in winLossRecords (nft.id based on updated NFTv2 standard)
-    ///
-    pub fun getWinLossRecord(nftUUID: UInt64): GamingMetadataViews.BasicWinLoss? {
-        return self.winLossRecords[nftUUID]
-    }
-
-    /// Getter method for winLossRecords
-    ///
-    /// @return A Mapping of GamingMetadataViews.BasicWinLoss struct defining the
-    /// total win/loss/tie record of the nft.uuid (nft.id based on updated NFTv2 standard)
-    /// on which it's indexed
-    ///
-    pub fun getTotalWinLossRecords(): {UInt64: GamingMetadataViews.BasicWinLoss} {
-        return self.winLossRecords
-    }
-
-    /// Getter method for historical gameplay history on a specified Match
-    ///
-    /// @param id: the Match.id for which the mapping is to be retrieved
-    ///
-    /// @return a mapping of GamePlayerID to SubmittedMove for the given Match or nil
-    /// if the Match does not exist in storage
-    ///
-    pub fun getMatchMoveHistory(id: UInt64): {UInt64: SubmittedMove}? {
-        let matchPath = self.getMatchStoragePath(id)!
-        if let matchRef = self.account.borrow<&Match>(from: matchPath) {
-            return matchRef.getSubmittedMoves()
+    pub fun getGameMoveHistory(id: UInt64): {Address: [[MoveState]]}? {
+        let gamePath = self.getGameStoragePath(id)!
+        if let gameRef = self.account.borrow<&Game>(from: gamePath) {
+            return gameRef.getPlayerMoves()
         }
         return nil
     }
 
-    /// Function for easy derivation of a Match's StoragePath. Provides no guarantees
-    /// that a Match is stored there.
-    ///
-    /// @param matchID: the id of the target Match
-    ///
-    /// @return the StoragePath where that Match would be stored
-    ///
-    pub fun getMatchStoragePath(_ matchID: UInt64): StoragePath {
-        let identifier = self.MatchStorageBasePathString.concat(matchID.toString())
+    pub fun getGameStoragePath(_ matchID: UInt64): StoragePath {
+        let identifier = self.GameStorageBasePathString.concat(matchID.toString())
         return StoragePath(identifier: identifier)!
     }
 
-    /// Function for easy derivation of a Match's PrivatePath. Provides no guarantees
-    /// that a Match is stored there.
-    ///
-    /// @param matchID: the id of the target Match
-    ///
-    /// @return the PrivatePath where that Match would be stored
-    ///
-    pub fun getGamePrivatePath(_ matchID: UInt64): PrivatePath {
-        let identifier = self.MatchStorageBasePathString.concat(matchID.toString())
+    pub fun getGamePrivatePath(_ gameID: UInt64): PrivatePath {
+        let identifier = self.GameStorageBasePathString.concat(gameID.toString())
         return PrivatePath(identifier: identifier)!
     }
 
-    /// Utility function allowing the public to clean up Matches that are no 
-    /// longer necessary, helping to reduce contract's storage usage
-    ///
-    pub fun destroyCompletedMatches(): [UInt64] {
-        
-        let destroyedMatchIDs: [UInt64] = []
-        // Iterate through completedMatchIDs
-        for matchID in self.completedMatchIDs {
-            // Derive the StoragePath of the Match with given id
-            let matchStoragePath = self.getMatchStoragePath(matchID)
-                
-            // Load and destroy the Match
-            let completedMatch <- self.account.load<@Match>(from: matchStoragePath)
-            destroy completedMatch
-            
-            // Remove the id of the destroyed Match, adding to array
-            // maintaining destroyed IDs
-            destroyedMatchIDs.append(self.completedMatchIDs.removeFirst())
-        }
-        // Return the IDs of the destroyed Matches
-        return destroyedMatchIDs
-    }
+    //----------------//
 
     init() {
-        // Initialize variables
-        self.name = "RockPaperScissors"
-        // TODO: Replace with actual values
-        self.info = GamingMetadataViews.GameContractMetadata(
-            name: self.name,
-            description: "Rock, Paper, Scissors on-chain!",
-            icon: MetadataViews.HTTPFile(
-                url: "https://static.vecteezy.com/system/resources/previews/000/691/500/large_2x/rock-paper-scissors-vector-icons.jpg"
-            ),
-            thumbnail: MetadataViews.HTTPFile(
-                url: "https://miro.medium.com/max/1400/0*pwDqZoXvHo79MoT7.webp"
-            ),
-            contractAddress: self.account.address,
-            externalURL: MetadataViews.ExternalURL(
-                "https://www.cheezewizards.com/"
-            )
-        )
-        self.winLossRecords = {}
-        self.completedMatchIDs = []
-
         // Assign canonical paths
-        self.GamePlayerStoragePath = /storage/RockPaperScissorsGamePlayer
-        self.GamePlayerPublicPath = /public/RockPaperScissorsGamePlayer
-        self.GamePlayerPrivatePath = /private/RockPaperScissorsGamePlayer
+        self.GamePlayerStoragePath = /storage/BattleBlocksGamePlayer
+        self.GamePlayerPublicPath = /public/BattleBlocksGamePlayer
+        self.GamePlayerPrivatePath = /private/BattleBlocksGamePlayer
         // Assign base paths for later concatenation
-        self.MatchStorageBasePathString = "Match"
-        self.MatchPrivateBasePathString = "Match"
-
-        // Create a contract GamePlayer to automate second player moves in single player modes
-        self.automatedGamePlayer <-create GamePlayer()
-        self.dummyNFTID = 0
+        self.GameStorageBasePathString = "Match"
+        self.GamePrivateBasePathString = "Match"
     }
 }
  
