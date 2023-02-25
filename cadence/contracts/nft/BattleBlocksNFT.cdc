@@ -26,7 +26,7 @@ pub contract BattleBlocksNFT: NonFungibleToken {s
     pub event Deposit(id: UInt64, to: Address?)
 
     /// The event that is emitted when an NFT is minted
-    pub event Minted(id: UInt64, name: String)
+    pub event Minted(id: UInt64, name: String, to: Address?)
 
     /// The event that is emitted when an NFT is destroyed
     pub event Burned(id: UInt64, from: Address?)
@@ -206,7 +206,7 @@ pub contract BattleBlocksNFT: NonFungibleToken {s
             )
 
             // emit Minted event for the new nft
-            emit Minted(id: BattleBlocksNFT.totalSupply, name: name)
+            emit Minted(id: BattleBlocksNFT.totalSupply, name: name, to: recipient.owner?.address)
 
             // deposit it in the recipient's account using their reference
             recipient.deposit(token: <-newNFT)
