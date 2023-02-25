@@ -1,4 +1,5 @@
-import NonFungibleToken from "./standard/NonFungibleToken.cdc"
+import FungibleToken from "../standard/FungibleToken.cdc"
+import FlowToken from "../standard/FlowToken.cdc"
 
 pub contract BattleBlocksGame {
 
@@ -118,263 +119,43 @@ pub contract BattleBlocksGame {
 
     //-----Interfaces-----//
 
-    //--------------------//
-
-    //-----Resources-----//
-
-    //-------------------//
-
-    //-----Public-----//
-
-    //----------------//
-
-    /// Struct to contain information about a submitted move including when
-    /// it was submitted and the ID of the submitting GamePlayer
-    ///
-
-
-    /** --- WinLossRetriever Implementation --- */
-    /// Resource acts as a retriever for an NFT's WinLoss data
-    pub resource RPSWinLossRetriever: DynamicNFT.Attachment, MetadataViews.Resolver, GamingMetadataViews.GameResource, GamingMetadataViews.BasicWinLossRetriever {
-        /// The ID of the NFT where this resource is attached (UUID by NFTv2 standards)
-        pub let nftID: UInt64
-        pub let nftUUID: UInt64
-        /// Struct containing metadata about the attachment's related game
-        pub let gameContractInfo: GamingMetadataViews.GameContractMetadata
-        /// The Type this attachment is designed to be attached to
-        pub let attachmentFor: [Type]
-
-        init(nftID: UInt64, nftUUID: UInt64) {
-            self.nftID = nftID
-            self.nftUUID = nftUUID
-            self.gameContractInfo = RockPaperScissorsGame.info
-            self.attachmentFor = [Type<@{NonFungibleToken.INFT, DynamicNFT.Dynamic}>()]
-        }
-
-        /// Retrieves the WinLoss data records of the NFT where this is attached
-        ///
-        /// @return the GamingMetadataViews.BasicWinLoss or nil if the NFT
-        ///  does not exist in the mapping of winLossRecords
-        ///
-        pub fun getWinLossData(): GamingMetadataViews.BasicWinLoss? {
-            let winLossRecord: GamingMetadataViews.BasicWinLoss? = RockPaperScissorsGame.getWinLossRecord(nftUUID: self.nftUUID)
-            return winLossRecord
-        }
-
-        /// Allows the owner to reset the WinLoss records of the NFT where this is attached
-        ///
-        pub fun resetWinLossData() {
-            RockPaperScissorsGame.resetWinLossRecord(nftUUID: self.nftUUID)
-        }
-
-        /** --- MetadataViews.Resolver --- */
-        /// Returns the Types of views that can be resolved by the resource
-        ///
-        pub fun getViews(): [Type] {
-            return [Type<GamingMetadataViews.BasicWinLoss>()]
-        }
-
-        /// Given a supported view type, will return the view struct as AnyStruct
-        ///
-        pub fun resolveView(_ type: Type): AnyStruct? {
-            switch type {
-                case Type<GamingMetadataViews.BasicWinLoss>():
-                    return self.getWinLossData()
-                default:
-                    return nil
-            }
-        }
-    }
-
-    /** --- RPSAssignedMoves --- */
-    /// Resource designed to store & manage game moves. While this isn't necessarily useful
-    /// in a simple game like rock, paper, scissors, the case of defining and amending moves
-    /// assigned to a base resource could be helpful in deck-based games or games where
-    /// available moves change regularly (i.e. between rounds or based on in-game stats).
-    ///
-    pub resource RPSAssignedMoves : DynamicNFT.Attachment, MetadataViews.Resolver, GamingMetadataViews.GameResource, GamingMetadataViews.AssignedMoves {
-        /// The ID of the NFT where this resource is attached
-        pub let nftID: UInt64
-        /// Struct containing metadata about the attachment's related game
-        pub let gameContractInfo: GamingMetadataViews.GameContractMetadata
-        /// The Type this attachment is designed to be attached to
-        pub let attachmentFor: [Type]
-        /// Encapsulated generic game moves so no one can edit them except this contract
-        access(contract) let moves: [AnyStruct]
-
-        init(seedMoves: [AnyStruct], nftID: UInt64) {
-            self.nftID = nftID
-            self.gameContractInfo = RockPaperScissorsGame.info
-            self.attachmentFor = [Type<@{NonFungibleToken.INFT, DynamicNFT.Dynamic}>()]
-            self.moves = seedMoves
-        }
-
-        /** --- MetadataViews.Resolver --- */
-        /// Returns the Types of views that can be resolved by the resource
-        ///
-        pub fun getViews(): [Type] {
-            return [Type<&GamingMetadataViews.AssignedMovesView>()]
-        }
-
-        /// Given a supported view type, will return the view struct as AnyStruct
-        ///
-        pub fun resolveView(_ type: Type): AnyStruct? {
-            switch type {
-                case Type<GamingMetadataViews.AssignedMovesView>():
-                    return GamingMetadataViews.AssignedMovesView(
-                        gameName: RockPaperScissorsGame.name,
-                        nftID: self.nftID,
-                        moves: self.moves
-                    )
-                default:
-                    return nil
-            }
-        }
-
-        /** --- GamingMetadataViews.AssignedMoves --- */
-        /// Getter for the generic encapsulated moves
-        ///
-        /// @return generic array of AnyStruct
-        ///
-        pub fun getMoves(): [AnyStruct] {
-            return self.moves
-        }
-
-        /// Getter for the RPS game-specific encapsulated moves
-        ///
-        /// @return moves array as RockPaperScissorsGame.Moves
-        ///
-        pub fun getRPSMoves(): [Moves] {
-            return self.moves as! [Moves]
-        }
-
-        /// Append the given array to stored moves array
-        ///
-        /// @param newMoves: Moves to be appended to self.moves
-        ///
-        access(contract) fun addMoves(newMoves: [AnyStruct]) {
-            assert(
-            newMoves as? [Moves] != nil,
-            message: "Attempted to add moves to that are not compatible with this Attachment!"
-            )
-            self.moves.appendAll(newMoves)
-        }
-
-        /// Remove the move at the given index
-        ///
-        /// @param targetIdx: Index of AnyStruct to be removed from self.moves
-        ///
-        /// @return the AnyStruct removed at the given index if one exists, nil otherwise
-        ///
-        access(contract) fun removeMove(targetIdx: Int): AnyStruct? {
-            if self.moves.length > targetIdx {
-                return self.moves.remove(at: targetIdx)
-            }
-            return nil
-        }
-    }
-
-    /** --- Interface to expose Player Capabilities --- */
-
-    /// Interface exposing the ability to escrow an NFT which then returns
-    /// a Capability to engage with the Match
-    ///
-    pub resource interface MatchLobbyActions {
+    pub resource interface GameActions {
         pub let id: UInt64
-        pub fun getWinningNFTID(): UInt64?
-        pub fun getWinningPlayerID(): UInt64?
-        pub fun escrowNFTToMatch(
-            nft: @AnyResource{NonFungibleToken.INFT, DynamicNFT.Dynamic},
-            receiver: Capability<&{NonFungibleToken.Receiver}>,
-            gamePlayerIDRef: &{GamePlayerID}
-        ): Capability<&{MatchPlayerActions}>
+        pub fun getWinningPlayerAddress(): Address?
+        pub fun depositWager(
+            wager: @FlowToken.Vault,
+            receiver: Capability<&FlowToken.Vault{FungibleToken.Receiver}>,
+            playerAddress: Address
+        ): Capability<&{PlayerActions}>
+        pub fun getPricePools(): UFix64
     }
 
-    /// Interface exposing the player's actions for a Match
+    /// Interface exposing the player's actions for a Game
     ///
-    /// Through MatchPlayerActions, users can submit moves, get available moves assigned
+    /// Through PlayerActions, users can submit moves, get available moves assigned
     /// to their NFT, and call to return all escrowed NFTs to the escrowing players. A
     /// fallback method to retrieve an NFT is also included to give a user the ability
     /// to retrieve their NFT if needed.
     ///
-    pub resource interface MatchPlayerActions {
+    pub resource interface PlayerActions {
         pub let id: UInt64
-        pub fun getWinningNFTID(): UInt64?
-        pub fun getNFTGameMoves(forPlayerID: UInt64): [Moves]?
-        pub fun submitMove(move: Moves, gamePlayerIDRef: &{GamePlayerID})
+        pub fun getWinningPlayerAddress(): Address?
+        pub fun getPlayerGameMoves(playerAddress: Address): {UInt8: MoveState}?
+        pub fun submitMove(move: Coordinate, playerAddress: Address)
         pub fun resolveMatch()
-        pub fun returnPlayerNFTs(): [UInt64]
-        pub fun retrieveUnclaimedNFT(
-            gamePlayerIDRef: &{GamePlayerID},
-            receiver: Capability<&{NonFungibleToken.Receiver}>
-        ): UInt64
     }
 
-    /// Resource defining a Match as a single round of Rock Paper Scissors
-    /// between two players who must first escrow their NFTs in the
-    /// Match before play can begin. Single player is also enabled so users can play
-    /// by themselves, just know that it uses unsafeRandom() and has blockheight
-    /// restrictions between move submission & resolution to prevent cheating.
-    ///
-    pub resource Match : MatchLobbyActions, MatchPlayerActions {
-        /// The id of the Match is used to derive the path at which it's stored
-        /// in this contract account's storage and to index associated Capabilities.
-        /// It is also helpful for watching related Match events.
+    //--------------------//
+
+    //-----Resources-----//
+
+    pub resource Game : GameActions, PlayerActions {
         pub let id: UInt64
-        /// Tag defining single or multiplayer behavior for the Match
-        pub let isMultiPlayer: Bool
-        pub var escrowCapacity: Int
-        
-        /// Match timeLimit parameters defining how long the Match can escrow
-        /// player NFTs before they exercise their right to have them returned.
-        pub let createdTimestamp: UFix64
-        pub let timeLimit: UFix64
+        pub var data: GameData
+        access(self) let prizePool: @FungibleToken.Vault
 
-        /// Defines whether match is still in play or not
-        pub var inPlay: Bool
-
-        /// Mapping of NFT.id to NFTs escrowed during gameplay
-        access(self) let escrowedNFTs: @{UInt64: AnyResource{NonFungibleToken.INFT, DynamicNFT.Dynamic}}
-        /// Track NFT associate with GamePlayer
-        pub let gamePlayerIDToNFTUUID: {UInt64: UInt64}
-        /// Keep Receiver Capabilities to easily return NFTs
-        pub let nftReceivers: {UInt64: Capability<&{NonFungibleToken.Receiver}>}
-
-        /// Define the allowable Moves in this Match
-        pub let allowedMoves: [Moves]
-        /// Maintain number of moves submitted
-        access(self) let submittedMoves: {UInt64: SubmittedMove}
-
-        /// Maintain id of winning nft
-        pub var winningNFTID: UInt64?
-        /// Maintain id of winning GamePlayer
-        pub var winningPlayerID: UInt64?
-
-        init(matchTimeLimit: UFix64, multiPlayer: Bool) {
-            pre {
-                matchTimeLimit <= UFix64(86400000): "matchTimeLimit must be less than a day (86400000 ms)"
-            }
-            self.id = self.uuid
-            self.isMultiPlayer = multiPlayer
-            if multiPlayer {
-                self.escrowCapacity = 2
-            } else {
-                self.escrowCapacity = 1
-            }
-            self.inPlay = true
-            self.createdTimestamp = getCurrentBlock().timestamp
-            self.timeLimit = matchTimeLimit
-            self.escrowedNFTs <- {}
-            self.nftReceivers = {}
-            self.gamePlayerIDToNFTUUID = {}
-            self.allowedMoves = [
-                RockPaperScissorsGame.Moves.paper,
-                RockPaperScissorsGame.Moves.rock,
-                RockPaperScissorsGame.Moves.scissors
-            ]
-            self.submittedMoves = {}
-            self.winningNFTID = nil
-            self.winningPlayerID = nil
+        init(data: GameData) {
+            self.prizePool <- FlowToken.createEmptyVault()
         }
 
         /** --- MatchLobbyActions ---*/
@@ -758,6 +539,17 @@ pub contract BattleBlocksGame {
             destroy self.escrowedNFTs
         }
     }
+
+    //-------------------//
+
+    //-----Public-----//
+
+    //----------------//
+
+
+
+
+
 
     /** --- Player Related Interfaces --- */
 
