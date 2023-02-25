@@ -20,15 +20,41 @@ pub contract BattleBlocksGame {
 
     //-----Events-----//
 
-    pub event NewMatchCreated(gameName: String, matchID: UInt64, creatorID: UInt64)
-    pub event PlayerSignedUpForMatch(gameName: String, matchID: UInt64, addedPlayerID: UInt64)
-    pub event PlayerAddedToMatch(gameName: String, matchID: UInt64, addedPlayerID: UInt64)
-    pub event MoveSubmitted(
-        gameName: String,
-        matchID: UInt64,
-        submittingGamePlayerID: UInt64,
-        totalRoundMovesSubmitted: Int
+    pub event PlayerJoinedGame(
+        gameID: UInt64,
+        challenger: Address,
+        startTime: UInt64,
+        wager: UFix64,
+        playerA: Address,
+        playerB: Address?,
+        winner: Address?,
+        playerHitCount: {Address: UInt8},
+        gameState: UInt8,
+        turn: UInt8,
+        playerAMerkleRoot: [UInt8],
+        playerBMerkleRoot: [UInt8]
     )
+
+    pub event GameOver (
+        gameID: UInt64,
+        playerA: Address,
+        playerB: Address,
+        winner: Address?,
+        playerHitCount: {Address: UInt8}
+    )
+
+    pub event Moved(
+        gameID: UInt64,
+        gamePlayerID: UInt64,
+        playerAddress: Address,
+        coordinateX: UInt64,
+        coordinateY: UInt64
+    )
+
+    pub event NewMatchCreated(gameName: String, matchID: UInt64, creatorID: UInt64)
+
+    pub event PlayerSignedUpForMatch(gameName: String, matchID: UInt64, addedPlayerID: UInt64)
+
     pub event MatchOver(
         gameName: String,
         matchID: UInt64,
@@ -44,24 +70,19 @@ pub contract BattleBlocksGame {
 
     //-----Enums-----//
 
-    pub enum GameState: UInt64 {
-        pub case ready
-        pub case cancelled
+    pub enum GameState: UInt8 {
+        pub case pending
         pub case active
-        pub case abandoned
-        pub case victoryPending
-        pub case victoryChallenged
-        pub case complete
-        pub case zeroed
+        pub case completed
     }
 
-    pub enum TurnState: UInt64 {
+    pub enum TurnState: UInt8 {
         pub case inactive
         pub case playerA
         pub case playerB
     }
 
-    pub enum MoveState: UInt64 {
+    pub enum MoveState: UInt8 {
         pub case unkown
         pub case pending
         pub case hit
@@ -72,7 +93,7 @@ pub contract BattleBlocksGame {
 
     //-----Structs-----//
 
-    pub struct Coordinate {
+    pub struct Coordinates {
         pub let x: UInt64
         pub let y: UInt64
 
@@ -82,37 +103,117 @@ pub contract BattleBlocksGame {
         }
     }
 
+    pub struct Guess {
+        pub let coodinates: Coordinates
+        pub let isBlock: Bool
+
+        init (coodinates: Coordinates, isBlock: Bool) {
+            self.coodinates = coodinates
+            self.isBlock = isBlock
+        }
+    }
+
+    pub struct Reveal {
+        pub let guess: Guess
+        pub let nonce: UInt64
+
+        init (guess: Guess, nonce: UInt64) {
+            self.guess = guess
+            self.nonce = nonce
+        }
+
+        pub fun toString(): String{
+            return (self.guess.isBlock ? "1" : "0")
+                .concat(self.guess.coodinates.x.toString())
+                .concat(self.guess.coodinates.y.toString())
+                .concat(self.nonce.toString())
+        }
+    }
+
     pub struct GameData {
         pub let startTime: UInt64
         pub let wager: UFix64
         pub let playerA: Address
-        pub let playerB: Address
+        pub var playerB: Address?
         pub var winner: Address?
-        pub var playerAHitCount: UInt64
-        pub var playerBHitCount: UInt64
         pub var gameState: GameState
         pub var turn: TurnState
         pub let playerAMerkleRoot: [UInt8]
-        pub let playerBMerkleRoot: [UInt8]
-        access(contract) var playerAMoves: {UInt8: MoveState}
-        access(contract) var playerBMoves: {UInt8: MoveState}
+        access(contract) var playerHitCount: {Address: UInt8}
+        access(contract) var playerBMerkleRoot: [UInt8]
+        // playerAddress => [X,Y] MoveState
+        access(contract) var playerMoves : {Address: [[MoveState]]}
+        // playerAddress => Coodinates in order
+        access(contract) var playerGuesses: {Address: [Coordinates]}
 
-        init(wager: UFix64, playerA: Address, playerB: Address, playerAMerkleRoot: [UInt8], playerBMerkpleRoot: [UInt8]){
+
+        init(wager: UFix64, playerA: Address, playerAMerkleRoot: [UInt8]){
             self.startTime = UInt64(getCurrentBlock().timestamp)
             self.wager = wager
             self.playerA = playerA
-            self.playerB = playerB
-            self.turn = TurnState.playerA
-            self.gameState = GameState.ready
+            self.playerB = nil
+            self.turn = TurnState.inactive
+            self.gameState = GameState.pending
             self.playerAMerkleRoot = playerAMerkleRoot
-            self.playerBMerkleRoot = playerBMerkpleRoot
+            self.playerBMerkleRoot = []
 
             self.winner = nil
-            self.playerAHitCount = 0
-            self.playerBHitCount = 0
-            self.playerAMoves = {}
-            self.playerBMoves = {}
+            self.playerHitCount = {}
+            self.playerMoves = {}
+            self.playerGuesses = {}
         }
+
+        access(contract) fun setPlayerB(_ playerB: Address) {
+            self.playerB = playerB
+        }
+
+        access(contract) fun setPlayerBMerkpleRoot(_ playerBMerkleRoot: [UInt8]) {
+            self.playerBMerkleRoot = playerBMerkleRoot
+        }
+
+        access(contract) fun setTurn(_ nextTurn: TurnState){
+            self.turn = nextTurn
+        }
+        
+        access(contract) fun setPlayerMoves (player: Address, moves: [[MoveState]]) {
+            self.playerMoves[player] = moves
+        }
+
+        access(contract) fun playerGuess (player: Address, guess: Coordinates){
+            if (self.playerGuesses[player] != nil ) {
+                self.playerGuesses[player]!.append(guess)
+            } else {
+                self.playerGuesses[player] = [guess]
+            }
+        }
+
+        // Returns TRUE if game is over, otherwise FALSE
+        access(contract) fun increaseHitCount (player: Address): Bool{
+            if (self.playerHitCount[player] != nil ) {
+                self.playerHitCount[player] = self.playerHitCount[player]! + 1
+            } else {
+                self.playerHitCount[player] = 1
+            }
+            if (self.playerHitCount[player] == 10) {
+                // Game Over
+
+                self.winner = player
+                self.gameState = GameState.completed
+                self.turn = TurnState.inactive
+
+                return true
+            } else {
+                return false
+            }
+        }
+
+        pub fun getLatestPlayerGuess(player: Address): Coordinates? {
+            if (self.playerGuesses[player] != nil ) {
+                return self.playerGuesses[player]![self.playerGuesses[player]!.length - 1]
+            } else {
+                return nil
+            }
+        } 
     }
 
     //-----------------//
@@ -128,20 +229,18 @@ pub contract BattleBlocksGame {
             playerAddress: Address
         ): Capability<&{PlayerActions}>
         pub fun getPricePools(): UFix64
+        pub fun getGamePlayerIds(): {Address: UInt64}
     }
 
-    /// Interface exposing the player's actions for a Game
-    ///
-    /// Through PlayerActions, users can submit moves, get available moves assigned
-    /// to their NFT, and call to return all escrowed NFTs to the escrowing players. A
-    /// fallback method to retrieve an NFT is also included to give a user the ability
-    /// to retrieve their NFT if needed.
-    ///
+    pub resource interface GamePlayerID {
+        pub let id: UInt64
+    }
+
     pub resource interface PlayerActions {
         pub let id: UInt64
         pub fun getWinningPlayerAddress(): Address?
         pub fun getPlayerGameMoves(playerAddress: Address): {UInt8: MoveState}?
-        pub fun submitMove(move: Coordinate, playerAddress: Address)
+        pub fun submitMove(move: Coordinates, playerAddress: Address)
         pub fun resolveMatch()
     }
 
@@ -151,215 +250,215 @@ pub contract BattleBlocksGame {
 
     pub resource Game : GameActions, PlayerActions {
         pub let id: UInt64
-        pub var data: GameData
-        access(self) let prizePool: @FungibleToken.Vault
+        access(contract) var data: GameData
+        access(self) let prizePool: @FlowToken.Vault
+        access(contract) var gamePlayerIDs: {UInt8: {Address: UInt64}}
 
         init(data: GameData) {
-            self.prizePool <- FlowToken.createEmptyVault()
+            self.prizePool <- FlowToken.createEmptyVault() as! @FlowToken.Vault
+            self.data = data
+            self.id = self.uuid
+            self.gamePlayerIDs = {}
         }
 
-        /** --- MatchLobbyActions ---*/
+        pub fun getGamePlayerIds(): {UInt8: {Address: UInt64}} {
+            return self.gamePlayerIDs
+        }
 
-        /// Allows for an NFT to be deposited to escrow, returning a Capability
-        /// that enables the holder to engage in gameplay. Note that a single player Match
-        /// only requires the actual players to escrow NFTs to avoid needing to store
-        /// NFTs for the sake of automated play.
-        ///
-        /// @param nft: The NFT to be escrowed into the Match
-        /// @param receiver: The Receiver to which the NFT will be returned
-        /// after the Match is over
-        /// @param playerID: The GamePlayer.id of the depositing player
-        ///
-        /// @return MatchPlayerActions Capability for this Match
-        ///
-        pub fun escrowNFTToMatch(
-            nft: @AnyResource{NonFungibleToken.INFT, DynamicNFT.Dynamic},
-            receiver: Capability<&{NonFungibleToken.Receiver}>,
-            gamePlayerIDRef: &{GamePlayerID}
-        ): Capability<&{MatchPlayerActions}> {
+        pub fun depositWager(wager: @FlowToken.Vault, merkleRoot: [UInt8], gamePlayerIDRef: &{GamePlayerID}): Capability<&{PlayerActions}> {
             pre {
-                !self.gamePlayerIDToNFTUUID.containsKey(gamePlayerIDRef.id):
-                    "Player has already joined this Match!"
-                self.escrowedNFTs.length < self.escrowCapacity:
-                    "Both players have already escrowed their NFTs, Match is full!"
-                !self.escrowedNFTs.containsKey(nft.id):
-                    "NFT with id ".concat(nft.id.toString()).concat(" already in escrow!")
-                self.inPlay == true:
-                    "Match is over!"
-                receiver.check():
-                    "Given Receiver Capability is not valid!"
-            }
-            post {
-                RockPaperScissorsGame.movesEqual(
-                    self.getNFTGameMoves(
-                        forPlayerID: gamePlayerIDRef.id
-                    )!, self.allowedMoves
-                ):
-                    "Moves improperly assigned to escrowed NFT!"
+                !(self.data.playerA == gamePlayerIDRef.owner?.address || self.data.playerB == gamePlayerIDRef.owner?.address):
+                    "Player has alpending joined this Game!"
+                wager.balance == self.data.wager:
+                    "Invalid wager amount!"
+                self.prizePool.balance != self.data.wager * 2.0:
+                    "Prize pool has alpending been filled"
+                self.data.gameState == GameState.pending:
+                    "Game alpending started!"
             }
 
-            // Get MatchPlayerActions Capability from contract account's storage
-            let matchPrivatePath = RockPaperScissorsGame.getMatchPrivatePath(self.id)
-            let matchPlayerActionsCap = RockPaperScissorsGame.account
+            let gamePrivatePath = BattleBlocksGame.getGamePrivatePath(self.id)
+
+            let gamePlayerActionsCap = BattleBlocksGame.account
                 .getCapability<&{
-                    MatchPlayerActions
+                    PlayerActions
                 }>(
-                    matchPrivatePath
+                    gamePrivatePath
                 )
-            // Check the Capability is valid
+            
             assert(
-                matchPlayerActionsCap.check(),
-                message: "Problem retrieving Match's MatchPlayerActions Capability!"
+                gamePlayerActionsCap.check(),
+                message: "Invalid PlayerActions Capability!"
             )
 
-            let nftID: UInt64 = nft.id
-            let nftUUID: UInt64 = nft.uuid
+            let playerB = gamePlayerIDRef.owner?.address!
 
-            // Insert GamingMetadataViews.BasicWinLoss for this game
-            // Check for existing record occurs in function definition
-            RockPaperScissorsGame.insertWinLossRecord(nftUUID: nftUUID)
+            let gamePlayerIDtoAddress = {playerB: gamePlayerIDRef.id}
 
-            // Ensure the NFT has a way to retrieve win/loss data with a GamingMetadataViews.BasicWinLossRetriever attachment
-            if !nft.hasAttachmentType(Type<@RockPaperScissorsGame.RPSWinLossRetriever>()) {
-                let retriever <- create RockPaperScissorsGame.RPSWinLossRetriever(nftID: nftID, nftUUID: nftUUID)
-                nft.addAttachment(<-retriever)
-            }
+            self.gamePlayerIDs.insert(key: 2, gamePlayerIDtoAddress)
 
-            // See if the NFT has moves for this game
-            if !nft.hasAttachmentType(Type<@RockPaperScissorsGame.RPSAssignedMoves>()) {
-                // Add the AssignedMoves attachment to the NFT
-                let moves <- create RockPaperScissorsGame.RPSAssignedMoves(
-                        seedMoves: self.allowedMoves,
-                        nftID: nftID
-                    )
-                nft.addAttachment(<-moves)
-            }
+            // Update Game data
 
-            // Then store player's NFT & Receiver
-            self.escrowedNFTs[nftUUID] <-! nft
-            self.nftReceivers.insert(key: nftUUID, receiver)
+            self.data.setPlayerB(gamePlayerIDRef.owner?.address!)
+            self.prizePool.deposit(from: <- wager)
+            self.data.setTurn(TurnState.playerA)
 
-            // Maintain association of this NFT with the depositing GamePlayer
-            self.gamePlayerIDToNFTUUID.insert(key: gamePlayerIDRef.id, nftUUID)
-
-            // Ensure the NFT was added to escrow properly
-            assert(
-                &self.escrowedNFTs[nftUUID] as &{NonFungibleToken.INFT}? != nil,
-                message: "NFT was not successfully added to escrow!"
+            emit PlayerJoinedGame(
+                gameID: self.id,
+                challenger: playerB,
+                startTime: self.data.startTime,
+                wager: self.data.wager,
+                playerA: self.data.playerA,
+                playerB: self.data.playerB,
+                winner: self.data.winner,
+                playerHitCount: self.data.playerHitCount,
+                gameState: self.data.gameState.rawValue,
+                turn: self.data.turn.rawValue,
+                playerAMerkleRoot: self.data.playerAMerkleRoot,
+                playerBMerkleRoot: self.data.playerBMerkleRoot,
             )
 
-            emit PlayerEscrowedNFTToMatch(
-                gameName: RockPaperScissorsGame.name,
-                matchID: self.id,
-                gamePlayerID: gamePlayerIDRef.id,
-                nftID: nftID,
-                nftUUID: nftUUID,
-                numberOfNFTsInEscrow: UInt8(self.escrowedNFTs.length),
-                reachedEscrowCapacity: self.escrowedNFTs.length == self.escrowCapacity
-            )
-
-            return matchPlayerActionsCap
+            return gamePlayerActionsCap
         }
 
-        /* --- MatchLobbyActions & MatchPlayerActions --- */
-        /// Getter to retrieve the winning player ID for the match
-        ///
-        pub fun getWinningNFTID(): UInt64? {
+        pub fun getWinningPlayerAddress(): Address? {
             pre {
-                !self.inPlay:
+                self.data.gameState == GameState.completed:
                     "Match must be resolved before a winner is determined"
             }
-            return self.winningNFTID
+            return self.data.winner
         }
 
-        /// Getter to retrieve the winning NFT ID for the match
-        ///
-        pub fun getWinningPlayerID(): UInt64? {
+        pub fun getPlayerGameMoves(playerAddress: Address): [[MoveState]]? {
+            return self.data.playerMoves[playerAddress]
+        }
+
+        pub fun submitMove(coordinates: Coordinates, gamePlayerIDRef: &{GamePlayerID}, proof: [[UInt8]]?, reveal: Reveal?) {
             pre {
-                !self.inPlay:
-                    "Match must be resolved before a winner is determined"
+                !(self.data.gameState == GameState.active):
+                    "You can only submit moves to active games!"
+
+                self.gamePlayerIDs[self.data.turn.rawValue]!.keys[0] == gamePlayerIDRef.owner?.address:
+                    "It's not your turn to play!"
             }
-            return self.winningPlayerID
-        }
+            
+            let playerAddress = gamePlayerIDRef.owner?.address!
 
-        /** --- MatchPlayerActions --- */
+            var previousPlayer: Address? = nil
 
-        /// Allows the caller to retrieve the moves assigned to the NFT
-        /// deposited by the given GamePlayer.id
-        pub fun getNFTGameMoves(forPlayerID: UInt64): [Moves]? {
-            // Get a reference to their escrowed NFT
-            if let playerNFTID = self.gamePlayerIDToNFTUUID[forPlayerID] {
-                if let nftRef = &self.escrowedNFTs[playerNFTID] as &{NonFungibleToken.INFT, DynamicNFT.Dynamic}? {
-                    // Get a reference to the NFT's AssignedMoves attachment
-                    if let attachmentRef = nftRef.getAttachmentRef(
-                            Type<@RockPaperScissorsGame.RPSAssignedMoves>()
-                        ) {
-                        let assignedMovesRef = attachmentRef as! &RockPaperScissorsGame.RPSAssignedMoves
-                        return assignedMovesRef.moves as! [Moves]
+            var currentPlayerMerkleRoot: [UInt8] = []
+
+            if (playerAddress == self.data.playerA) {
+                previousPlayer = self.data.playerB
+                currentPlayerMerkleRoot = self.data.playerAMerkleRoot
+            } else if (playerAddress == self.data.playerB) {
+                previousPlayer = self.data.playerA
+                currentPlayerMerkleRoot = self.data.playerBMerkleRoot
+            } else {
+                panic ("Invalid player address")
+            }
+
+            if !(self.data.playerMoves[self.data.playerMoves.keys[0]]?.length != nil && self.data.playerMoves[self.data.playerMoves.keys[1]]?.length != nil) {
+                // Not First
+
+                // Proof for Last Guess
+                let guessCoordinates = self.data.getLatestPlayerGuess(player: previousPlayer!)!
+                if !(reveal!.guess.coodinates.x == guessCoordinates.x && reveal!.guess.coodinates.y == guessCoordinates.y) {
+                    panic ("Invalid coordinates revealed")
+                } else {
+                    if !(self.proveGuess(playerMerkleRoot: currentPlayerMerkleRoot, proof: proof!, reveal: reveal!)) {
+                        panic ("Failed prooving guess")
+                    } else {
+                        if (self.data.increaseHitCount(player: previousPlayer!)) {
+                            // Game Over
+                            emit GameOver(
+                                gameID: self.id,
+                                playerA: self.data.playerA,
+                                playerB: self.data.playerB!,
+                                winner: self.data.winner,
+                                playerHitCount: self.data.playerHitCount
+                            )
+                        }
                     }
-                    return nil
+                }       
+            } else {
+                // First
+            }
+
+            // Move
+            let playerMoves:[[MoveState]] = self.data.playerMoves[playerAddress] == nil ? [[]] : self.data.playerMoves[playerAddress]!
+            playerMoves[coordinates.y][coordinates.x] = MoveState.pending
+            self.data.setPlayerMoves(player: playerAddress, moves: playerMoves)
+
+            // Guess
+            self.data.playerGuess(player: playerAddress, guess: coordinates)  
+
+            emit Moved(
+                gameID: self.id,
+                gamePlayerID: gamePlayerIDRef.id,
+                playerAddress: playerAddress,
+                coordinateX: coordinates.x,
+                coordinateY: coordinates.y
+                )
+        }
+
+        priv fun proveGuess(playerMerkleRoot: [UInt8], proof: [[UInt8]], reveal: Reveal): Bool {
+            let leaf = HashAlgorithm.KECCAK_256.hash((String.encodeHex(reveal.toString().utf8).utf8))
+            return self.verifyProof(proof: proof, root: playerMerkleRoot, leaf: leaf)
+        }
+
+        priv fun verifyProof(proof: [[UInt8]], root: [UInt8], leaf: [UInt8]): Bool {
+            pre {
+                proof.length > 0: "invalid proof"
+                root.length == 32: "invalid root"
+                leaf.length == 32: "invalid leaf"
+            }
+
+            for p in proof {
+                if p.length != 32 {
+                    panic("invalid proof")
                 }
             }
-            return nil
-        }
 
-        /// Function allows players to submit their moves to the match.
-        ///
-        /// Note that to submit moves, a reference to a GamePlayer's
-        /// GamePlayerID must be provided. This is due to the fact that both
-        /// GamePlayers have the same MatchPlayerActions Capability. If we simply
-        /// asked for the GamePlayer's id as a provided argument, we couldn't trust they
-        /// would be honest, so the Match asks for a reference that only the submitting
-        /// GamePlayer should be able to provide.
-        ///
-        /// @param moves: a mapping of nft.id to Moves (rock, paper, or scissors)
-        /// with the expectation that there are exactly two entries
-        ///
-        pub fun submitMove(move: Moves, gamePlayerIDRef: &{GamePlayerID}) {
-            pre {
-                self.escrowedNFTs.length == self.escrowCapacity:
-                    "Both players must escrow NFTs before play begins!"
-                self.gamePlayerIDToNFTUUID.containsKey(gamePlayerIDRef.id) ||
-                (
-                    gamePlayerIDRef.id == RockPaperScissorsGame.automatedGamePlayer.id &&
-                    !self.isMultiPlayer
-                ):
-                    "Player is not associated with this Match!"
-                gamePlayerIDRef.id != RockPaperScissorsGame.automatedGamePlayer.id ||
-                (
-                    gamePlayerIDRef.id == RockPaperScissorsGame.automatedGamePlayer.id &&
-                    self.submittedMoves.length == 1 &&
-                    !self.isMultiPlayer
-                ):
-                    "Player must submit move before automated player in single-player mode!"
-                !self.submittedMoves.containsKey(RockPaperScissorsGame.automatedGamePlayer.id):
-                    "Player cannot submit move after automated player!"
-                !self.submittedMoves.containsKey(gamePlayerIDRef.id):
-                    "Player has already submitted move for this Match!"
-                self.submittedMoves.length < 2:
-                    "Both moves have already been submitted for this Match!"
-                gamePlayerIDRef.id == RockPaperScissorsGame.automatedGamePlayer.id ||
-                self.getNFTGameMoves(forPlayerID: gamePlayerIDRef.id)!.contains(move):
-                    "Player's NFT does not have the submitted move available to play!"
-                self.inPlay == true:
-                    "Match is not in play any longer!"
+            let hasher = HashAlgorithm(rawVaule: HashAlgorithm.KECCAK_256.rawValue)!
+
+            var computedHash = leaf
+            var counter = 0
+            while counter < proof.length {
+                let proofElement = proof[counter]
+                if self.compareBytes(proofElement, computedHash) == 1 {
+                    computedHash = hasher.hash(computedHash.concat(proofElement))
+                } else {
+                    computedHash = hasher.hash(proofElement.concat(computedHash))
+                }
+
+                counter = counter + 1
             }
 
-            // Add the move to the mapping of submitted moves indexed by the
-            // submitting player's GamePlayerID.id
-            self.submittedMoves.insert(
-                key: gamePlayerIDRef.id, 
-                SubmittedMove(
-                    gamePlayerID: gamePlayerIDRef.id,
-                    move: move
-            ))
+            return self.compareBytes(computedHash, root) == 0
+        }
 
-            emit MoveSubmitted(
-                gameName: RockPaperScissorsGame.name,
-                matchID: self.id,
-                submittingGamePlayerID: gamePlayerIDRef.id,
-                totalRoundMovesSubmitted: self.submittedMoves.length
-            )
+        priv fun compareBytes(_ b1: [UInt8], _ b2: [UInt8]): Int8 {
+            pre {
+                b1.length == 32: "invalid params"
+                b2.length == 32: "invalid params"
+            }
+            
+            var counter = 0
+            while counter < b1.length {
+                let diff = Int32(b1[counter]) - Int32(b2[counter])
+                if diff > 0 {
+                    return 1
+                }
+
+                if diff < 0 {
+                    return -1
+                }
+
+                counter = counter + 1
+            }
+
+            return 0
         }
 
         /// This function resolves the Match, demanding that both player moves have been
@@ -526,17 +625,13 @@ pub contract BattleBlocksGame {
             }
             return self.submittedMoves
         }
-        
-        /// Custom destroyer to prevent destroying escrowed NFTs
+
         destroy() {
             pre {
-                self.escrowedNFTs.length == 0:
-                    "Cannot destroy while NFTs in escrow!"
-                getCurrentBlock().timestamp >= self.createdTimestamp + self.timeLimit ||
-                self.inPlay == false: 
+                self.data.gameState != GameState.complete: 
                     "Cannot destroy while Match is still in play!"
             }
-            destroy self.escrowedNFTs
+            destroy self.prizePool
         }
     }
 
@@ -580,13 +675,11 @@ pub contract BattleBlocksGame {
     ///
     pub resource interface DelegatedGamePlayer {
         pub let id: UInt64
-        pub let gameContractInfo: GamingMetadataViews.GameContractMetadata
         pub fun getGamePlayerIDRef(): &{GamePlayerID}
-        pub fun getAvailableMoves(matchID: UInt64): [Moves]
         pub fun getMatchesInLobby(): [UInt64]
         pub fun getMatchesInPlay(): [UInt64]
-        pub fun getMatchLobbyCaps(): {UInt64: Capability<&{MatchLobbyActions}>}
-        pub fun getMatchPlayerCaps(): {UInt64: Capability<&{MatchPlayerActions}>}
+        pub fun getMatchLobbyCaps(): {UInt64: Capability<&{GameActions}>}
+        pub fun getMatchPlayerCaps(): {UInt64: Capability<&{PlayerActions}>}
         pub fun deleteLobbyActionsCapability(matchID: UInt64)
         pub fun deletePlayerActionsCapability(matchID: UInt64)
         pub fun createMatch(
@@ -729,7 +822,7 @@ pub contract BattleBlocksGame {
             
             // Derive paths using matchID
             let matchStoragePath = RockPaperScissorsGame.getMatchStoragePath(newMatchID)
-            let matchPrivatePath = RockPaperScissorsGame.getMatchPrivatePath(newMatchID)
+            let matchPrivatePath = RockPaperScissorsGame.getGamePrivatePath(newMatchID)
             
             // Save the match to game contract account's storage
             RockPaperScissorsGame.account.save(<-newMatch, to: matchStoragePath)
@@ -768,7 +861,7 @@ pub contract BattleBlocksGame {
             return newMatchID
         }
 
-        /// Allows for GamePlayer to sign up for a match that already exists. Doing so retrieves the 
+        /// Allows for GamePlayer to sign up for a match that alpending exists. Doing so retrieves the 
         /// MatchPlayerActions Capability from the contract account's private storage and add
         /// it to the GamePlayers mapping of Capabilities.
         ///
@@ -796,7 +889,7 @@ pub contract BattleBlocksGame {
         }
 
         /// Allows for NFTs to be taken from GamePlayer's Collection and escrowed into the given Match.id
-        /// using the MatchPlayerActions Capability already in their mapping
+        /// using the MatchPlayerActions Capability alpending in their mapping
         ///
         /// @param nft: The NFT to be escrowed
         /// @param matchID: The id of the Match into which the NFT will be escrowed
@@ -874,7 +967,7 @@ pub contract BattleBlocksGame {
         ///
         pub fun addPlayerToMatch(matchID: UInt64, gamePlayerRef: &AnyResource{GamePlayerPublic}) {
             // Derive match's private path from matchID
-            let matchPrivatePath = RockPaperScissorsGame.getMatchPrivatePath(matchID)
+            let matchPrivatePath = RockPaperScissorsGame.getGamePrivatePath(matchID)
             // Get the capability
             let matchLobbyActionsCap: Capability<&AnyResource{MatchLobbyActions}> = RockPaperScissorsGame.account
                 .getCapability<&{MatchLobbyActions}>(matchPrivatePath)
@@ -917,7 +1010,7 @@ pub contract BattleBlocksGame {
         pub fun addMatchLobbyActionsCapability(matchID: UInt64, _ cap: Capability<&{MatchLobbyActions}>) {
             pre {
                 !self.matchLobbyCapabilities.containsKey(matchID) && !self.matchPlayerCapabilities.containsKey(matchID):
-                    "Player already has capability for this Match!"
+                    "Player alpending has capability for this Match!"
             }
             post {
                 self.matchLobbyCapabilities.containsKey(matchID): "Capability for match has not been saved into player"
@@ -1049,53 +1142,9 @@ pub contract BattleBlocksGame {
     ///
     /// @return the PrivatePath where that Match would be stored
     ///
-    pub fun getMatchPrivatePath(_ matchID: UInt64): PrivatePath {
+    pub fun getGamePrivatePath(_ matchID: UInt64): PrivatePath {
         let identifier = self.MatchStorageBasePathString.concat(matchID.toString())
         return PrivatePath(identifier: identifier)!
-    }
-
-    /// Enable submission of random move to single player Match. To make randomness a bit safer,
-    /// this should be run in a separate transaction than the player's move is submitted.
-    ///
-    /// @param matchID: The id for the Match to which the random move will be submitted
-    ///
-    pub fun submitAutomatedPlayerMove(matchID: UInt64) {
-        // Assign a random move
-        let randomMove = Moves(
-                rawValue: UInt8(unsafeRandom() % 3)
-            ) ?? panic("Random move does not map to a legal RockPaperScissorsGame.Moves value!")
-        // Get the Match
-        let matchStoragePath = self.getMatchStoragePath(matchID)
-        let matchRef = self.account
-            .borrow<&{
-                MatchPlayerActions
-            }>(
-                from: matchStoragePath
-            ) ?? panic("Could not get MatchPlayerActions reference for given Match!")
-        matchRef.submitMove(move: randomMove, gamePlayerIDRef: &self.automatedGamePlayer as &{GamePlayerID})
-    }
-
-    /// Helper method to compare arrays of Moves
-    ///
-    /// @param first: one array of Moves
-    /// @param second: other array of Moves
-    ///
-    /// @return true if the two arrays are equal, false otherwise
-    ///
-    pub fun movesEqual(_ first: [Moves], _ second: [Moves]): Bool {
-        // Return false if they have differing lengths
-        if first.length != second.length {
-            return false
-        }
-        // With same length we can compare their elements
-        for idx, move in first {
-            // Compare elements at each index are contained in the other
-            if !second.contains(move) || !first.contains(second[idx]) {
-                return false
-            }
-        }
-        // Passed all non-equal cases so must be equal
-        return true
     }
 
     /// Utility function allowing the public to clean up Matches that are no 
@@ -1119,52 +1168,6 @@ pub contract BattleBlocksGame {
         }
         // Return the IDs of the destroyed Matches
         return destroyedMatchIDs
-    }
-
-    /// Inserts a WinLoss record into the winLossRecords mapping if one does
-    /// not already exist for the given nft.id
-    ///
-    /// @param nftUUID: uuid of the NFT (nft.id based on updated NFTv2 standard) 
-    /// for which a GamingMetadataViews.BasicWinLoss will be indexed into the
-    /// contract's historical winLossRecords mapping
-    ///
-    access(contract) fun insertWinLossRecord(nftUUID: UInt64) {
-        // Before inserting, make sure there is not already a record for the
-        // given nftUUID
-        if self.winLossRecords[nftUUID] == nil {
-            self.winLossRecords.insert(key: nftUUID, GamingMetadataViews.BasicWinLoss(
-                game: RockPaperScissorsGame.name,
-                nftID: nftUUID
-            ))
-        }
-    }
-
-    /// Method to update GamingMetadataViews.BasicWinLoss for each NFT based
-    /// on Match winner results
-    ///
-    /// @param: nftUUID: uuid of associated NFT in winLossRecords (nft.id based on updated 
-    /// NFTv2 standard)
-    /// @param: winner: id of winning NFT or nil if event was a tie
-    ///
-    access(contract) fun updateWinLossRecord(nftUUID: UInt64, winner: UInt64?) {
-        if nftUUID == winner {
-            self.winLossRecords[nftUUID]!.addWin()
-        } else if nftUUID != winner && winner != nil{
-            self.winLossRecords[nftUUID]!.addLoss()
-        } else {
-            self.winLossRecords[nftUUID]!.addTie()
-        }
-    }
-
-    /// Update GamingMetadataViews.BasicWinLoss for a certain NFT 
-    /// resetting the records for said NFT
-    ///
-    /// @param: nftUUID: uuid of associated NFT in winLossRecords (nft.id based on updated 
-    /// NFTv2 standard)
-    ///
-    access(contract) fun resetWinLossRecord(nftUUID: UInt64) {
-        assert(self.winLossRecords[nftUUID] != nil, message: "NFT does not have an associated record")
-        self.winLossRecords[nftUUID]!.reset()
     }
 
     init() {
