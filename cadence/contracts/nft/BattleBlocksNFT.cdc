@@ -11,7 +11,7 @@
 
 import NonFungibleToken from "../standard/NonFungibleToken.cdc"
 
-pub contract BattleBlocksNFT: NonFungibleToken {s
+pub contract BattleBlocksNFT: NonFungibleToken {
 
     /// Total supply of BattleBlocksNFTs in existence
     pub var totalSupply: UInt64
