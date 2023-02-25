@@ -22,7 +22,6 @@ pub contract BattleBlocksGame {
 
     pub event PlayerJoinedGame(
         gameID: UInt64,
-        challenger: Address,
         startTime: UInt64,
         wager: UFix64,
         playerA: Address,
@@ -133,7 +132,7 @@ pub contract BattleBlocksGame {
     pub struct GameData {
         pub let startTime: UInt64
         pub let wager: UFix64
-        pub let playerA: Address
+        pub var playerA: Address
         pub var playerB: Address?
         pub var winner: Address?
         pub var gameState: GameState
@@ -145,7 +144,6 @@ pub contract BattleBlocksGame {
         access(contract) var playerMoves : {Address: [[MoveState]]}
         // playerAddress => Coodinates in order
         access(contract) var playerGuesses: {Address: [Coordinates]}
-
 
         init(wager: UFix64, playerA: Address, playerAMerkleRoot: [UInt8]){
             self.startTime = UInt64(getCurrentBlock().timestamp)
@@ -165,6 +163,10 @@ pub contract BattleBlocksGame {
 
         access(contract) fun setPlayerB(_ playerB: Address) {
             self.playerB = playerB
+        }
+
+        access(contract) fun setPlayerA(_ playerA: Address) {
+            self.playerA = playerA
         }
 
         access(contract) fun setPlayerBMerkpleRoot(_ playerBMerkleRoot: [UInt8]) {
@@ -223,13 +225,13 @@ pub contract BattleBlocksGame {
     pub resource interface GameActions {
         pub let id: UInt64
         pub fun getWinningPlayerAddress(): Address?
-        pub fun depositWager(
+        pub fun joinGame(
             wager: @FlowToken.Vault,
-            receiver: Capability<&FlowToken.Vault{FungibleToken.Receiver}>,
-            playerAddress: Address
+            merkleRoot: [UInt8],
+            gamePlayerIDRef: &{GamePlayerID}
         ): Capability<&{PlayerActions}>
-        pub fun getPricePools(): UFix64
-        pub fun getGamePlayerIds(): {Address: UInt64}
+        pub fun getPrizePool(): UFix64
+        pub fun getGamePlayerIds(): {UInt8: {Address: UInt64}}
     }
 
     pub resource interface GamePlayerID {
@@ -239,9 +241,23 @@ pub contract BattleBlocksGame {
     pub resource interface PlayerActions {
         pub let id: UInt64
         pub fun getWinningPlayerAddress(): Address?
-        pub fun getPlayerGameMoves(playerAddress: Address): {UInt8: MoveState}?
-        pub fun submitMove(move: Coordinates, playerAddress: Address)
-        pub fun resolveMatch()
+        pub fun getPlayerGameMoves(playerAddress: Address): [[MoveState]]? 
+        pub fun submitMove(
+            coordinates: Coordinates,
+            gamePlayerIDRef: &{GamePlayerID},
+            proof: [[UInt8]]?,
+            reveal: Reveal?
+            )
+    }
+
+    pub resource interface GamePlayerPublic {
+        pub let id: UInt64
+        pub fun addMatchLobbyActionsCapability(
+            matchID: UInt64,
+            _ cap: Capability<&{GameActions}>
+        )
+        pub fun getMatchesInLobby(): [UInt64]
+        pub fun getMatchesInPlay(): [UInt64]
     }
 
     //--------------------//
@@ -254,18 +270,32 @@ pub contract BattleBlocksGame {
         access(self) let prizePool: @FlowToken.Vault
         access(contract) var gamePlayerIDs: {UInt8: {Address: UInt64}}
 
-        init(data: GameData) {
-            self.prizePool <- FlowToken.createEmptyVault() as! @FlowToken.Vault
-            self.data = data
+        init(
+            wager: @FlowToken.Vault,
+            playerAMerkleRoot: [UInt8],
+            gamePlayerIDRef: &{GamePlayerID}
+            ) {
+            self.data = GameData(
+                wager: wager.balance,
+                playerA: gamePlayerIDRef.owner?.address!,
+                playerAMerkleRoot: playerAMerkleRoot
+                )
+            self.prizePool <- wager
             self.id = self.uuid
             self.gamePlayerIDs = {}
+            let gamePlayerIDtoAddress = {gamePlayerIDRef.owner?.address!: gamePlayerIDRef.id}
+            self.gamePlayerIDs.insert(key: 1, gamePlayerIDtoAddress)
         }
 
         pub fun getGamePlayerIds(): {UInt8: {Address: UInt64}} {
             return self.gamePlayerIDs
         }
 
-        pub fun depositWager(wager: @FlowToken.Vault, merkleRoot: [UInt8], gamePlayerIDRef: &{GamePlayerID}): Capability<&{PlayerActions}> {
+        pub fun getPrizePool(): UFix64 {
+            return self.prizePool.balance
+        }
+
+        pub fun joinGame(wager: @FlowToken.Vault, merkleRoot: [UInt8], gamePlayerIDRef: &{GamePlayerID}): Capability<&{PlayerActions}> {
             pre {
                 !(self.data.playerA == gamePlayerIDRef.owner?.address || self.data.playerB == gamePlayerIDRef.owner?.address):
                     "Player has alpending joined this Game!"
@@ -291,21 +321,31 @@ pub contract BattleBlocksGame {
                 message: "Invalid PlayerActions Capability!"
             )
 
-            let playerB = gamePlayerIDRef.owner?.address!
+            let playerAddress = gamePlayerIDRef.owner?.address!
 
-            let gamePlayerIDtoAddress = {playerB: gamePlayerIDRef.id}
+            let gamePlayerIDtoAddress = {playerAddress: gamePlayerIDRef.id}
 
-            self.gamePlayerIDs.insert(key: 2, gamePlayerIDtoAddress)
+            var playerIndex: UInt8 = 0
+
+            if (playerAddress == self.data.playerA) {
+                playerIndex = TurnState.playerA.rawValue
+                self.data.setPlayerA(gamePlayerIDRef.owner?.address!)
+            } else if (playerAddress == self.data.playerB) {
+                playerIndex = TurnState.playerB.rawValue
+                self.data.setPlayerB(gamePlayerIDRef.owner?.address!)
+                self.data.setTurn(TurnState.playerA)
+            } else {
+                panic ("Invalid player address")
+            }
+            
+            self.prizePool.deposit(from: <- wager)
+
+            self.gamePlayerIDs.insert(key: playerIndex, gamePlayerIDtoAddress)
 
             // Update Game data
 
-            self.data.setPlayerB(gamePlayerIDRef.owner?.address!)
-            self.prizePool.deposit(from: <- wager)
-            self.data.setTurn(TurnState.playerA)
-
             emit PlayerJoinedGame(
                 gameID: self.id,
-                challenger: playerB,
                 startTime: self.data.startTime,
                 wager: self.data.wager,
                 playerA: self.data.playerA,
@@ -358,6 +398,11 @@ pub contract BattleBlocksGame {
                 panic ("Invalid player address")
             }
 
+            // Move
+            let playerMoves:[[MoveState]] = self.data.playerMoves[playerAddress] == nil ? [[]] : self.data.playerMoves[playerAddress]!
+            playerMoves[coordinates.y][coordinates.x] = MoveState.pending
+            self.data.setPlayerMoves(player: playerAddress, moves: playerMoves)
+
             if !(self.data.playerMoves[self.data.playerMoves.keys[0]]?.length != nil && self.data.playerMoves[self.data.playerMoves.keys[1]]?.length != nil) {
                 // Not First
 
@@ -369,26 +414,29 @@ pub contract BattleBlocksGame {
                     if !(self.proveGuess(playerMerkleRoot: currentPlayerMerkleRoot, proof: proof!, reveal: reveal!)) {
                         panic ("Failed prooving guess")
                     } else {
-                        if (self.data.increaseHitCount(player: previousPlayer!)) {
-                            // Game Over
-                            emit GameOver(
-                                gameID: self.id,
-                                playerA: self.data.playerA,
-                                playerB: self.data.playerB!,
-                                winner: self.data.winner,
-                                playerHitCount: self.data.playerHitCount
-                            )
+                        let previousPlayerMoves:[[MoveState]] = self.data.playerMoves[previousPlayer!] == nil ? [[]] : self.data.playerMoves[previousPlayer!]!
+                        if (reveal!.guess.isBlock) {
+                            previousPlayerMoves[coordinates.y][coordinates.x] = MoveState.hit
+                            if (self.data.increaseHitCount(player: previousPlayer!)) {
+                                // Game Over
+                                emit GameOver(
+                                    gameID: self.id,
+                                    playerA: self.data.playerA,
+                                    playerB: self.data.playerB!,
+                                    winner: self.data.winner,
+                                    playerHitCount: self.data.playerHitCount
+                                )
+                            } 
+                        } else {
+                            previousPlayerMoves[coordinates.y][coordinates.x] = MoveState.miss
                         }
                     }
                 }       
             } else {
                 // First
-            }
 
-            // Move
-            let playerMoves:[[MoveState]] = self.data.playerMoves[playerAddress] == nil ? [[]] : self.data.playerMoves[playerAddress]!
-            playerMoves[coordinates.y][coordinates.x] = MoveState.pending
-            self.data.setPlayerMoves(player: playerAddress, moves: playerMoves)
+                // No need proof Last Guess
+            }
 
             // Guess
             self.data.playerGuess(player: playerAddress, guess: coordinates)  
@@ -461,175 +509,18 @@ pub contract BattleBlocksGame {
             return 0
         }
 
-        /// This function resolves the Match, demanding that both player moves have been
-        /// submitted for resolution to occur
-        ///
-        pub fun resolveMatch() {
-            pre {
-                self.submittedMoves.length == 2:
-                    "Both players must submit moves before the Match can be resolved!"
-                self.inPlay == true:
-                    "Match is not in play any longer!"
-            }
-
-            // Ensure that match resolution is not called in the same transaction as either move submission
-            // to prevent cheating
-            assert(
-                getCurrentBlock().height > self.submittedMoves[self.submittedMoves.keys[0]]!.submittedHeight &&
-                getCurrentBlock().height > self.submittedMoves[self.submittedMoves.keys[1]]!.submittedHeight,
-                message: "Too soon after move submission to resolve the match!"
-            )
-            // Determine the ids of winning GamePlayer.id & NFT.id
-            self.winningPlayerID = RockPaperScissorsGame
-                .determineRockPaperScissorsWinner(
-                    moves: self.submittedMoves
-                )
-            // Assign winningNFTID to NFT submitted by the winning GamePlayer
-            if self.winningPlayerID != nil && self.winningPlayerID != RockPaperScissorsGame.automatedGamePlayer.id {
-                self.winningNFTID = self.gamePlayerIDToNFTUUID[self.winningPlayerID!]!
-            // If the winning player is the contract's automated player, assign the winningNFTID 
-            // to the contract's dummyNFTID
-            } else if self.winningPlayerID == RockPaperScissorsGame.automatedGamePlayer.id {
-                self.winningNFTID = RockPaperScissorsGame.dummyNFTID
-            }
-
-            // Ammend NFTs win/loss data
-            for nftID in self.escrowedNFTs.keys {
-                RockPaperScissorsGame.updateWinLossRecord(
-                    nftUUID: nftID,
-                    winner: self.winningNFTID
-                )
-            }
-
-            // Mark the Match as no longer in play
-            self.inPlay = false
-
-            // Announce the Match results
-            let player1ID = self.submittedMoves.keys[0]
-            let player2ID = self.submittedMoves.keys[1]
-            emit MatchOver(
-                gameName: RockPaperScissorsGame.name,
-                matchID: self.id,
-                player1ID: player1ID,
-                player1MoveRawValue: self.submittedMoves[player1ID]!.move.rawValue,
-                player2ID: player2ID,
-                player2MoveRawValue: self.submittedMoves[player2ID]!.move.rawValue,
-                winningGamePlayer: self.winningPlayerID,
-                winningNFTID: self.winningNFTID
-            )
+        access(contract) fun getPlayerMoves(): {Address: [[MoveState]]} {
+            return self.data.playerMoves
         }
 
-        /** --- MatchLobbyActions & MatchPlayerActions --- */
-
-        /// Can be called by any interface if there's a timeLimit or assets weren't returned
-        /// for some reason
-        ///
-        /// @return An array containing the nft.ids of all NFTs returned to their owners
-        ///
-        pub fun returnPlayerNFTs(): [UInt64] {
-            pre {
-                getCurrentBlock().timestamp >= self.createdTimestamp + self.timeLimit ||
-                self.inPlay == false:
-                    "Cannot return NFTs while Match is still in play!"
-            }
-
-            let returnedNFTs: [UInt64] = []
-            // Written so that issues with one player's Receiver won't affect the return of
-            // any other player's NFT
-            for id in self.nftReceivers.keys {
-                if let receiverCap: Capability<&{NonFungibleToken.Receiver}> = self.nftReceivers[id] {
-                    if let receiverRef = receiverCap.borrow() {
-                        // We know we have the proper Receiver reference, so we'll now move the token & deposit
-                        if let token <- self.escrowedNFTs.remove(key: id) as! @NonFungibleToken.NFT? {
-                            receiverRef.deposit(token: <- token)
-                            returnedNFTs.append(id)
-                        }
-                    }
-                }
-            }
-            // Set inPlay to false in case Match timed out
-            self.inPlay = false
-            // Add the id of this Match to the history of completed Matches
-            // as long as all it does not contain NFTs. Doing so allows the Match to be
-            // destroyed to clean up contract account storage
-            if self.escrowedNFTs.length == 0 {
-                RockPaperScissorsGame.completedMatchIDs.append(self.id)
-            }
-
-            emit ReturnedPlayerNFTs(
-                gameName: RockPaperScissorsGame.name,
-                matchID: self.id,
-                returnedNFTs: returnedNFTs
-            )
-            
-            // Return an array containing ids of the successfully returned NFTs
-            return returnedNFTs
-        }
-
-        /// Function to enable a player to retrieve their NFT should they need to due to failure in
-        /// the returnPlayerNFTs() method
-        ///
-        /// @param gamePlayerIDRef: Reference to the player's GamePlayerID
-        /// @param receiver: A Receiver Capability to a resource the NFT will be deposited to
-        ///
-        pub fun retrieveUnclaimedNFT(
-            gamePlayerIDRef: &{GamePlayerID},
-            receiver: Capability<&{NonFungibleToken.Receiver}>
-        ): UInt64 {
-            pre {
-                getCurrentBlock().timestamp >= self.createdTimestamp + self.timeLimit ||
-                self.inPlay == false:
-                    "Cannot return NFTs while Match is still in play!"
-                self.gamePlayerIDToNFTUUID.containsKey(gamePlayerIDRef.id):
-                    "This GamePlayer is not associated with this Match!"
-                self.escrowedNFTs.containsKey(self.gamePlayerIDToNFTUUID[gamePlayerIDRef.id]!):
-                    "Player does not have any NFTs escrowed in this Match!"
-                receiver.check():
-                    "Could not borrow reference to provided Receiver in retrieveUnclaimedNFT()!"
-            }
-            // Get the NFT from escrow
-            let nftID = self.gamePlayerIDToNFTUUID[gamePlayerIDRef.id]!
-            let nft <- (self.escrowedNFTs.remove(key: nftID) as! @NonFungibleToken.NFT?)!
-            
-            // Return the NFT to the given Receiver
-            receiver.borrow()!.deposit(token: <-nft)
-
-            // Set inPlay to false in case Match timed out and it wasn't marked
-            self.inPlay = false
-            // Add the id of this Match to the history of completed Matches
-            // as long as all it does not contain NFTs. Doing so allows the Match to be
-            // destroyed to clean up contract account storage
-            if self.escrowedNFTs.length == 0 {
-                RockPaperScissorsGame.completedMatchIDs.append(self.id)
-            }
-
-            emit ReturnedPlayerNFTs(
-                gameName: RockPaperScissorsGame.name,
-                matchID: self.id,
-                returnedNFTs: [nftID]
-            )
-
-            return nftID
-        }
-
-        /** --- Match --- */
-
-        /// Retrieves the submitted moves for the Match, allowing for review of historical gameplay
-        ///
-        /// @return the mapping of GamePlayerID to SubmittedMove
-        ///
-        access(contract) fun getSubmittedMoves(): {UInt64: SubmittedMove} {
-            pre {
-                !self.inPlay:
-                    "Cannot get submitted moves until Match is complete!"
-            }
-            return self.submittedMoves
+        access(contract) fun getPlayerGuesses(): {Address: [Coordinates]} {
+            return self.data.playerGuesses
         }
 
         destroy() {
             pre {
-                self.data.gameState != GameState.complete: 
-                    "Cannot destroy while Match is still in play!"
+                self.data.gameState != GameState.completed: 
+                    "Cannot destroy while Gatch is still in play!"
             }
             destroy self.prizePool
         }
@@ -640,35 +531,6 @@ pub contract BattleBlocksGame {
     //-----Public-----//
 
     //----------------//
-
-
-
-
-
-
-    /** --- Player Related Interfaces --- */
-
-    /// A simple interface a player would use to demonstrate that they are
-    /// the given ID
-    ///
-    pub resource interface GamePlayerID {
-        pub let id: UInt64
-    }
-
-    /// Public interface allowing others to add GamePlayer to matches. Of course, there is
-    /// no obligation for matches to be played, but this makes it so that other players
-    /// each other to a Match       
-    ///
-    pub resource interface GamePlayerPublic {
-        pub let id: UInt64
-        pub fun addMatchLobbyActionsCapability(
-            matchID: UInt64,
-            _ cap: Capability<&{MatchLobbyActions}>
-        )
-        pub fun getAvailableMoves(matchID: UInt64): [Moves]?
-        pub fun getMatchesInLobby(): [UInt64]
-        pub fun getMatchesInPlay(): [UInt64]
-    }
 
     /// A resource interface allowing a user to delegate use of their GamePlayer
     /// via Capability
@@ -700,157 +562,108 @@ pub contract BattleBlocksGame {
         pub fun addMatchLobbyActionsCapability(matchID: UInt64, _ cap: Capability<&{MatchLobbyActions}>)
     }
 
-    /** --- Receiver for Match Capabilities --- */
-
-    /// Resource that maintains all the player's MatchPlayerActions capabilities
-    /// Players can add themselves to games or be added if they expose GamePlayerPublic
-    /// capability
-    ///
     pub resource GamePlayer : GamePlayerID, GamePlayerPublic {
         pub let id: UInt64
-        access(self) let matchLobbyCapabilities: {UInt64: Capability<&{MatchLobbyActions}>}
-        access(self) let matchPlayerCapabilities: {UInt64: Capability<&{MatchPlayerActions}>}
+        access(self) let gameCapabilities: {UInt64: Capability<&{GameActions}>}
+        access(self) let playerCapabilities: {UInt64: Capability<&{PlayerActions}>}
 
         init() {
             self.id = self.uuid
-            self.matchPlayerCapabilities = {}
-            self.matchLobbyCapabilities = {}
+            self.gameCapabilities = {}
+            self.playerCapabilities = {}
         }
         
-        /** --- GamePlayer --- */
-
-        /// Returns a reference to this resource as GamePlayerID
-        ///
-        /// @return reference to this GamePlayer's GamePlayerID Capability
-        ///
         pub fun getGamePlayerIDRef(): &{GamePlayerID} {
             return &self as &{GamePlayerID}
         }
 
-        /// Getter for the GamePlayer's available moves assigned to their escrowed NFT
-        ///
-        /// @param matchID: Match.id for which they are querying
-        ///
-        /// @return the Moves assigned to their escrowed NFT
-        ///
-        pub fun getAvailableMoves(matchID: UInt64): [Moves]? {
-            pre {
-                self.matchPlayerCapabilities[matchID] != nil:
-                    "Player is not engaged with the given Match"
-                self.matchPlayerCapabilities[matchID]!.check():
-                    "Problem with MatchPlayerMoves Capability for given Match.id!"
-            }
-            let matchCap = self.matchPlayerCapabilities[matchID]!
-            return matchCap.borrow()!.getNFTGameMoves(forPlayerID: self.id)
+        pub fun getGames(): [UInt64] {
+            return self.gameCapabilities.keys
         }
 
-        /// Getter for the ids of Matches for which player has MatchLobbyActions Capabilies
-        ///
-        /// @return ids of Matches for which player has MatchLobbyActions Capabilies
-        ///
-        pub fun getMatchesInLobby(): [UInt64] {
-            return self.matchLobbyCapabilities.keys
+        pub fun getPlayers(): [UInt64] {
+            return self.playerCapabilities.keys
         }
 
-        /// Getter for the ids of Matches for which player has MatchPlayerActions Capabilies
-        ///
-        /// @return ids of Matches for which player has MatchPlayerActions Capabilies
-        ///
-        pub fun getMatchesInPlay(): [UInt64] {
-            return self.matchPlayerCapabilities.keys
+        pub fun getGameCapabilities(): {UInt64: Capability<&{GameActions}>} {
+            return self.gameCapabilities
         }
 
-        /// Simple getter for mapping of MatchLobbyActions Capabilities
-        ///
-        /// @return mapping of Match.id to MatchLobbyActions Capabilities
-        ///
-        pub fun getMatchLobbyCaps(): {UInt64: Capability<&{MatchLobbyActions}>} {
-            return self.matchLobbyCapabilities
+        pub fun getPlayerCapibilities(): {UInt64: Capability<&{PlayerActions}>} {
+            return self.playerCapabilities
         }
 
-        /// Simple getter for mapping of MatchPlayerActions Capabilities
-        ///
-        /// @return mapping of Match.id to MatchPlayerActions Capabilities
-        ///
-        pub fun getMatchPlayerCaps(): {UInt64: Capability<&{MatchPlayerActions}>} {
-            return self.matchPlayerCapabilities
+        pub fun deleteGameActionsCapability(matchID: UInt64) {
+            self.gameCapabilities.remove(key: matchID)
         }
 
-        /// Allows GamePlayer to delete capabilities from their mapping to free up space used
-        /// by old matches.
-        ///
-        /// @param matchID: The id for the MatchLobbyActions Capability that the GamePlayer 
-        /// would like to delete from their matchLobbyCapabilities
-        ///
-        pub fun deleteLobbyActionsCapability(matchID: UInt64) {
-            self.matchLobbyCapabilities.remove(key: matchID)
-        }
-
-        /// Allows GamePlayer to delete capabilities from their mapping to free up space used
-        /// by old matches.
-        ///
-        /// @param matchID: The id for the MatchPlayerActions Capability that the GamePlayer 
-        /// would like to delete from their matchPlayerCapabilities
-        ///
         pub fun deletePlayerActionsCapability(matchID: UInt64) {
-            self.matchPlayerCapabilities.remove(key: matchID)
+            self.playerCapabilities.remove(key: matchID)
         }
 
-        /// Creates a new Match resource, saving it in the contract account's storage
-        /// and linking MatchPlayerActions at a dynamic path derived with the Match.id.
-        /// Creating a match requires an NFT and Receiver Capability to mitigate spam
-        /// vector where an attacker creates an exorbitant number of Matches.
-        ///
-        /// @param matchTimeLimit: Time before players have right to retrieve their
-        /// escrowed NFTs
-        /// 
-        /// @return: Match.id of the newly created Match
-        ///
-        pub fun createMatch(
-            multiPlayer: Bool,
-            matchTimeLimit: UFix64,
-            nft: @AnyResource{NonFungibleToken.INFT, DynamicNFT.Dynamic},
-            receiverCap: Capability<&{NonFungibleToken.Receiver}>
-        ): UInt64 {
-            pre {
-                receiverCap.check(): 
-                    "Problem with provided Receiver Capability!"
-            }
-            // Create the new match & preserve its ID
-            let newMatch <- create Match(matchTimeLimit: matchTimeLimit, multiPlayer: multiPlayer)
-            let newMatchID = newMatch.id
+        pub fun createMatch(wager: @FlowToken.Vault, playerAMerkleRoot: [UInt8]): UInt64 {
+            let gamePlayerIDRef = self.getGamePlayerIDRef()
+
+            let newGame <- create Game(data: game)
+        
+            let newGameID = newGame.id
             
             // Derive paths using matchID
-            let matchStoragePath = RockPaperScissorsGame.getMatchStoragePath(newMatchID)
-            let matchPrivatePath = RockPaperScissorsGame.getGamePrivatePath(newMatchID)
+            let gameStoragePath = BattleBlocksGame.getMatchStoragePath(newGameID)
+            let gamePrivatePath = BattleBlocksGame.getGamePrivatePath(newGameID)
             
             // Save the match to game contract account's storage
-            RockPaperScissorsGame.account.save(<-newMatch, to: matchStoragePath)
+            BattleBlocksGame.account.save(<-newGame, to: gameStoragePath)
             
             // Link each Capability to game contract account's private
-            RockPaperScissorsGame.account.link<&{
-                MatchLobbyActions,
-                MatchPlayerActions
+            BattleBlocksGame.account.link<&{
+                GameActions,
+                PlayerActions
             }>(
-                matchPrivatePath,
-                target: matchStoragePath
+                gamePrivatePath,
+                target: gameStoragePath
             )
 
             // Get the MatchLobbyActions Capability we just linked
-            let lobbyCap = RockPaperScissorsGame.account
+            let lobbyCap = BattleBlocksGame.account
                 .getCapability<&{
-                    MatchLobbyActions
+                    GameActions
                 }>(
-                    matchPrivatePath
+                    gamePrivatePath
                 )
             // Add that Capability to the GamePlayer's mapping
-            self.matchLobbyCapabilities[newMatchID] = lobbyCap
+            self.gameCapabilities[newGameID] = lobbyCap
 
-            // Deposit the specified NFT to the new Match & return the Match.id
-            self.depositNFTToMatchEscrow(nft: <-nft, matchID: newMatchID, receiverCap: receiverCap)
+            let gameCap: Capability<&{GameActions}> = self.gameCapabilities[newGameID]!
+            let gameActionsRef = gameCap
+                .borrow()
+                ?? panic("Could not borrow reference to GameActions")
+
+            let playerActionsCap: Capability<&{PlayerActions}> = gameActionsRef.joinGame(wager: <- wager, merkleRoot: merkleRoot, gamePlayerIDRef: gamePlayerIDRef)
+                    
+            // Add that Capability to the GamePlayer's mapping & remove from
+            // mapping of MatchLobbyCapabilities
+            self.matchPlayerCapabilities.insert(key: matchID, playerActionsCap)
+            self.matchLobbyCapabilities.remove(key: matchID)
+                
+            // Get the GameActions Capability from this GamePlayer's mapping
+            let gameActionsCap: Capability<&{GameActions}> = self.gameCapabilities[newGameID]!
+            let gameActionsRef = gameActionsCap
+                .borrow()
+                ?? panic("Could not borrow reference to GamePlayerActions")
+
+
+            let playerActionsCap: Capability<&{PlayerActions}> = gameActionsRef
+    
+            // Add that Capability to the GamePlayer's mapping & remove from
+            // mapping of MatchLobbyCapabilities
+            self.matchPlayerCapabilities.insert(key: matchID, playerActionsCap)
+            self.matchLobbyCapabilities.remove(key: matchID)
 
             // Remove the MatchLobbyActions now that the NFT has been escrowed & return the Match.id
             self.matchLobbyCapabilities.remove(key: newMatchID)
+
+
 
             emit NewMatchCreated(
                 gameName: RockPaperScissorsGame.name,
@@ -861,84 +674,29 @@ pub contract BattleBlocksGame {
             return newMatchID
         }
 
-        /// Allows for GamePlayer to sign up for a match that alpending exists. Doing so retrieves the 
-        /// MatchPlayerActions Capability from the contract account's private storage and add
-        /// it to the GamePlayers mapping of Capabilities.
-        ///
-        /// @param matchID: The id of the Match for which they want to retrieve the
-        /// MatchPlayerActions Capability
-        ///
-        pub fun signUpForMatch(matchID: UInt64) {
+        pub fun signUpForGame(gameID: UInt64) {
+
             // Derive path to capability
-            let matchPrivatePath = PrivatePath(identifier: RockPaperScissorsGame
-                .MatchPrivateBasePathString.concat(matchID.toString()))!
+            let gamePrivatePath = PrivatePath(identifier: BattleBlocksGame
+                .GamePrivateBasePathString.concat(gameID.toString()))!
+
             // Get the Capability
-            let matchLobbyActionsCap = RockPaperScissorsGame.account
-                .getCapability<&{MatchLobbyActions}>(matchPrivatePath)
+            let matchLobbyActionsCap = BattleBlocksGame.account
+                .getCapability<&{GameActions}>(gamePrivatePath)
 
             // Ensure Capability is not nil
             assert(
                 matchLobbyActionsCap.check(),
-                message: "Not able to retrieve MatchLobbyActions Capability for given matchID!"
+                message: "Not able to retrieve GameActions Capability for given gameID!"
             )
 
             // Add it to the mapping
-            self.matchLobbyCapabilities.insert(key: matchID, matchLobbyActionsCap)
+            self.gameCapabilities.insert(key: gameID, gameActionsCap)
 
-            emit PlayerSignedUpForMatch(gameName: RockPaperScissorsGame.name, matchID: matchID, addedPlayerID: self.id)
+            emit PlayerSignedUpForMatch(matchID: matchID, addedPlayerID: self.id)
         }
 
-        /// Allows for NFTs to be taken from GamePlayer's Collection and escrowed into the given Match.id
-        /// using the MatchPlayerActions Capability alpending in their mapping
-        ///
-        /// @param nft: The NFT to be escrowed
-        /// @param matchID: The id of the Match into which the NFT will be escrowed
-        /// @param receiverCap: The Receiver Capability to which the NFT will be returned
-        ///
-        pub fun depositNFTToMatchEscrow(
-            nft: @AnyResource{NonFungibleToken.INFT, DynamicNFT.Dynamic},
-            matchID: UInt64,
-            receiverCap: Capability<&{NonFungibleToken.Receiver}>
-        ) {
-            pre {
-                receiverCap.check(): 
-                    "Problem with provided Receiver Capability!"
-                self.matchLobbyCapabilities.containsKey(matchID) &&
-                !self.matchPlayerCapabilities.containsKey(matchID):
-                    "GamePlayer does not have the Capability to play this Match!"
-            }
-            post {
-                self.matchPlayerCapabilities.containsKey(matchID):
-                    "MatchPlayerActions Capability not successfully added!"
-                !self.matchLobbyCapabilities.containsKey(matchID) &&
-                self.matchPlayerCapabilities.containsKey(matchID):
-                    "GamePlayer does not have the Capability to play this Match!"
-            }
-            
-            // Ensure the Capability is valid
-            assert(
-                receiverCap.check(),
-                message: "Could not access Receiver Capability at the given path for this account!"
-            )
-            
-            // Get the MatchPlayerActions Capability from this GamePlayer's mapping
-            let matchLobbyCap: Capability<&{MatchLobbyActions}> = self.matchLobbyCapabilities[matchID]!
-            let matchLobbyActionsRef = matchLobbyCap
-                .borrow()
-                ?? panic("Could not borrow reference to MatchPlayerActions")
-
-            // Escrow the NFT to the Match, getting back a Capability
-            let playerActionsCap: Capability<&{MatchPlayerActions}> = matchLobbyActionsRef
-                .escrowNFTToMatch(
-                    nft: <-nft,
-                    receiver: receiverCap,
-                    gamePlayerIDRef: &self as &{GamePlayerID}
-                )
-            // Add that Capability to the GamePlayer's mapping & remove from
-            // mapping of MatchLobbyCapabilities
-            self.matchPlayerCapabilities.insert(key: matchID, playerActionsCap)
-            self.matchLobbyCapabilities.remove(key: matchID)
-        }
+        
 
         /// Allows the GamePlayer to submit a move to the provided Match.id
         ///
