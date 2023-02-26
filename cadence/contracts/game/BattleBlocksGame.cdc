@@ -400,9 +400,11 @@ pub contract BattleBlocksGame {
             if (playerAddress == self.data.playerA) {
                 previousPlayer = self.data.playerB
                 currentPlayerMerkleRoot = self.data.playerAMerkleRoot
+                self.data.setTurn(TurnState.playerB)
             } else if (playerAddress == self.data.playerB) {
                 previousPlayer = self.data.playerA
                 currentPlayerMerkleRoot = self.data.playerBMerkleRoot
+                self.data.setTurn(TurnState.playerA)
             } else {
                 panic ("Invalid player address")
             }
@@ -467,11 +469,8 @@ pub contract BattleBlocksGame {
             let prizeVault: @FlowToken.Vault <- self.prizePool <- FlowToken.createEmptyVault() as! @FlowToken.Vault
             winnerFlowReciever.deposit(from: <- prizeVault)
 
-            // Delete game from storage
-            let gameStoragePath = BattleBlocksGame.getGameStoragePath(self.id)
-            let completedGame <- BattleBlocksGame.account.load<@Game>(from: gameStoragePath)
-
-            destroy completedGame
+            // Set Turn
+            self.data.setTurn(TurnState.inactive)
 
             // Send event
             emit GameEnded(
@@ -481,6 +480,12 @@ pub contract BattleBlocksGame {
                 winner: self.data.winner,
                 playerHitCount: self.data.playerHitCount
                 )
+
+            // Delete game from storage
+            let gameStoragePath = BattleBlocksGame.getGameStoragePath(self.id)
+            let completedGame <- BattleBlocksGame.account.load<@Game>(from: gameStoragePath)
+
+            destroy completedGame
         }
 
         priv fun proveGuess(playerMerkleRoot: [UInt8], proof: [[UInt8]], reveal: Reveal): Bool {
