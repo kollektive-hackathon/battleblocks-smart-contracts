@@ -48,6 +48,16 @@ pub contract BattleBlocksGame {
         playerAMerkleRoot: [UInt8],
         playerBMerkleRoot: [UInt8]
         )
+    
+    pub event PlayerAdded(
+        gameID: UInt64,
+        addedPlayerID: UInt64
+        )
+
+    pub event PlayerSignedUp(
+        gameID: UInt64, 
+        addedPlayerID: UInt64
+        )
 
     pub event PlayerMoved(
         gameID: UInt64,
@@ -55,11 +65,6 @@ pub contract BattleBlocksGame {
         playerAddress: Address,
         coordinateX: UInt64,
         coordinateY: UInt64
-        )
-
-    pub event PlayerAdded(
-        gameID: UInt64,
-        addedPlayerID: UInt64
         )
 
     //----------------//
@@ -266,8 +271,10 @@ pub contract BattleBlocksGame {
         pub fun getPlayerCapabilities(): {UInt64: Capability<&{PlayerActions}>}
         pub fun deleteGameActionsCapability(gameID: UInt64) 
         pub fun deletePlayerActionsCapability(gameID: UInt64)
-        pub fun createMatch(wager: @FlowToken.Vault, playerAMerkleRoot: [UInt8]): UInt64
+        pub fun createGame(wager: @FlowToken.Vault, merkleRoot: [UInt8]): UInt64
+        pub fun joinGame(wager: @FlowToken.Vault, merkleRoot: [UInt8], gameID: UInt64) 
         pub fun submitMoveToGame(gameID: UInt64, coordinates: Coordinates, proof: [[UInt8]]?, reveal: Reveal?) 
+        pub fun signUpForGame(gameID: UInt64)
         pub fun addPlayerToGame(gameID: UInt64, gamePlayerRef: &AnyResource{GamePlayerPublic}) 
         pub fun addGameActionsCapability(gameID: UInt64, _ cap: Capability<&{GameActions}>)
     }
@@ -303,10 +310,10 @@ pub contract BattleBlocksGame {
                     "Player has alpending joined this Game!"
                 wager.balance == self.data.wager:
                     "Invalid wager amount!"
-                self.prizePool.balance != self.data.wager * 2.0:
+                self.prizePool.balance == self.data.wager * 2.0:
                     "Prize pool has alpending been filled"
                 self.data.gameState == GameState.pending:
-                    "Game alpending started!"
+                    "Game already started!"
             }
 
             let gamePrivatePath = BattleBlocksGame.getGamePrivatePath(self.id)
@@ -591,7 +598,7 @@ pub contract BattleBlocksGame {
             self.playerCapabilities.remove(key: gameID)
         }
 
-        pub fun createMatch(wager: @FlowToken.Vault, playerAMerkleRoot: [UInt8]): UInt64 {
+        pub fun createGame(wager: @FlowToken.Vault, merkleRoot: [UInt8]): UInt64 {
             let gamePlayerIDRef = self.getGamePlayerIDRef()
 
             let stake = wager.balance
@@ -599,7 +606,7 @@ pub contract BattleBlocksGame {
             let data = GameData(
                 wager: wager.balance,
                 playerA: gamePlayerIDRef.owner?.address!,
-                playerAMerkleRoot: playerAMerkleRoot
+                playerAMerkleRoot: merkleRoot
             )
 
             let newGame <- create Game(data: data)
@@ -629,17 +636,13 @@ pub contract BattleBlocksGame {
                 }>(
                     gamePrivatePath
                 )
+
             // Add that Capability to the GamePlayer's mapping
             self.gameCapabilities[newGameID] = lobbyCap
 
-            let gameCap: Capability<&{GameActions}> = self.gameCapabilities[newGameID]!
-            let gameActionsRef = gameCap
-                .borrow()
-                ?? panic("Could not borrow reference to GameActions")
+            self.joinGame(wager: <- wager, merkleRoot: merkleRoot, gameID: newGameID)
 
-            let playerActionsCap: Capability<&{PlayerActions}> = gameActionsRef.joinGame(wager: <- wager, merkleRoot: playerAMerkleRoot, gamePlayerIDRef: gamePlayerIDRef)
-                    
-            self.playerCapabilities.insert(key: newGameID, playerActionsCap)
+            // Remove the GameActions now that the wager has been deposited
             self.gameCapabilities.remove(key: newGameID)
 
             emit GameCreated(
@@ -650,6 +653,36 @@ pub contract BattleBlocksGame {
             )
 
             return newGameID
+        }
+
+        pub fun joinGame(wager: @FlowToken.Vault, merkleRoot: [UInt8], gameID: UInt64) {
+            pre {
+                self.gameCapabilities.containsKey(gameID) &&
+                !self.playerCapabilities.containsKey(gameID):
+                    "GamePlayer does not have the Capability to play this Game!"
+            }
+            post {
+                self.playerCapabilities.containsKey(gameID):
+                    "PlayerActions Capability not successfully added!"
+                !self.playerCapabilities.containsKey(gameID) &&
+                self.gameCapabilities.containsKey(gameID):
+                    "GamePlayer does not have the Capability to play this Game!"
+            }
+            
+            // Get the MatchPlayerActions Capability from this GamePlayer's mapping
+            let gameCap: Capability<&{GameActions}> = self.gameCapabilities[gameID]!
+            let gameActionsRef = gameCap
+                .borrow()
+                ?? panic("Could not borrow reference to GameActions")
+
+            // Join the game, getting back a Capability
+            let playerCap: Capability<&{PlayerActions}> = gameActionsRef
+                .joinGame(wager: <- wager, merkleRoot: merkleRoot, gamePlayerIDRef: &self as &{GamePlayerID})
+
+            // Add that Capability to the GamePlayer's mapping & remove from
+            // mapping of MatchLobbyCapabilities
+            self.playerCapabilities.insert(key: gameID, playerCap)
+            self.gameCapabilities.remove(key: gameID)
         }
 
         pub fun submitMoveToGame(gameID: UInt64, coordinates: Coordinates, proof: [[UInt8]]?, reveal: Reveal?) {
@@ -675,6 +708,26 @@ pub contract BattleBlocksGame {
             )
 
             gamePlayerRef.addGameActionsCapability(gameID: gameID, gameActionsCap)
+        }
+
+        pub fun signUpForGame(gameID: UInt64) {
+            // Derive path to capability
+            let gamePrivatePath = PrivatePath(identifier: BattleBlocksGame
+                .GamePrivateBasePathString.concat(gameID.toString()))!
+            // Get the Capability
+            let gameActionsCap = BattleBlocksGame.account
+                .getCapability<&{GameActions}>(gamePrivatePath)
+
+            // Ensure Capability is not nil
+            assert(
+                gameActionsCap.check(),
+                message: "Not able to retrieve GameLobbyActions Capability for given gameID!"
+            )
+
+            // Add it to the mapping
+            self.gameCapabilities.insert(key: gameID, gameActionsCap)
+
+            emit PlayerSignedUp(gameID: gameID, addedPlayerID: self.id)
         }
 
         pub fun addGameActionsCapability(gameID: UInt64, _ cap: Capability<&{GameActions}>) {
