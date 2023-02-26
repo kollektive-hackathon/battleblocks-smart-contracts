@@ -199,6 +199,7 @@ pub contract BattleBlocksGame {
                 self.playerHitCount[player] = 1
             }
             if (self.playerHitCount[player] == 10) {
+
                 // Game Over
 
                 self.winner = player
@@ -234,6 +235,7 @@ pub contract BattleBlocksGame {
         ): Capability<&{PlayerActions}>
         pub fun getPrizePool(): UFix64
         pub fun getGamePlayerIds(): {UInt8: {Address: UInt64}}
+        pub fun getGameData(): GameData
     }
 
     pub resource interface GamePlayerID {
@@ -304,10 +306,14 @@ pub contract BattleBlocksGame {
             return self.prizePool.balance
         }
 
+        pub fun getGameData(): GameData {
+            return self.data
+        }
+
         pub fun joinGame(wager: @FlowToken.Vault, merkleRoot: [UInt8], gamePlayerIDRef: &{GamePlayerID}): Capability<&{PlayerActions}> {
             pre {
                 !(self.data.playerA == gamePlayerIDRef.owner?.address || self.data.playerB == gamePlayerIDRef.owner?.address):
-                    "Player has alpending joined this Game!"
+                    "Player has already joined this Game!"
                 wager.balance == self.data.wager:
                     "Invalid wager amount!"
                 self.prizePool.balance == self.data.wager * 2.0:
@@ -773,6 +779,11 @@ pub contract BattleBlocksGame {
     pub fun getGamePrivatePath(_ gameID: UInt64): PrivatePath {
         let identifier = self.GameStorageBasePathString.concat(gameID.toString())
         return PrivatePath(identifier: identifier)!
+    }
+
+    pub fun getGameRef(_ id: UInt64): &Game? {
+        let gamePath = self.getGameStoragePath(id)
+        return self.account.borrow<&Game>(from: gamePath)
     }
 
     //----------------//
