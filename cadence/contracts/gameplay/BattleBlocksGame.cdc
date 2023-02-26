@@ -20,7 +20,22 @@ pub contract BattleBlocksGame {
 
     //-----Events-----//
 
-    pub event PlayerJoinedGame(
+    pub event GameCreated(
+        gameID: UInt64,
+        creatorID: UInt64,
+        creatorAddress: Address,
+        wager: UFix64,
+        )
+
+    pub event GameEnded (
+        gameID: UInt64,
+        playerA: Address,
+        playerB: Address,
+        winner: Address?,
+        playerHitCount: {Address: UInt8}
+        )
+
+    pub event PlayerJoined(
         gameID: UInt64,
         startTime: UInt64,
         wager: UFix64,
@@ -32,45 +47,20 @@ pub contract BattleBlocksGame {
         turn: UInt8,
         playerAMerkleRoot: [UInt8],
         playerBMerkleRoot: [UInt8]
-    )
+        )
 
-    pub event GameOver (
-        gameID: UInt64,
-        playerA: Address,
-        playerB: Address,
-        winner: Address?,
-        playerHitCount: {Address: UInt8}
-    )
-
-    pub event Moved(
+    pub event PlayerMoved(
         gameID: UInt64,
         gamePlayerID: UInt64,
         playerAddress: Address,
         coordinateX: UInt64,
         coordinateY: UInt64
-    )
+        )
 
-    pub event NewGameCreated(
+    pub event PlayerAdded(
         gameID: UInt64,
-        creatorID: UInt64,
-        creatorAddress: Address,
-        wager: UFix64,
-    )
-
-    pub event PlayerSignedUpForMatch(gameName: String, matchID: UInt64, addedPlayerID: UInt64)
-
-    pub event PlayerAddedToGame(gameID: UInt64, addedPlayerID: UInt64)
-
-    pub event MatchOver(
-        gameName: String,
-        matchID: UInt64,
-        player1ID: UInt64,
-        player1MoveRawValue: UInt8,
-        player2ID: UInt64,
-        player2MoveRawValue: UInt8,
-        winningGamePlayer: UInt64?,
-        winningNFTID: UInt64?
-    )
+        addedPlayerID: UInt64
+        )
 
     //----------------//
 
@@ -289,7 +279,7 @@ pub contract BattleBlocksGame {
     pub resource Game : GameActions, PlayerActions {
         pub let id: UInt64
         access(contract) var data: GameData
-        access(self) let prizePool: @FlowToken.Vault
+        access(self) var prizePool: @FlowToken.Vault
         access(contract) var gamePlayerIDs: {UInt8: {Address: UInt64}}
 
         init(data: GameData) {
@@ -356,7 +346,7 @@ pub contract BattleBlocksGame {
 
             // Update Game data
 
-            emit PlayerJoinedGame(
+            emit PlayerJoined(
                 gameID: self.id,
                 startTime: self.data.startTime,
                 wager: self.data.wager,
@@ -431,13 +421,7 @@ pub contract BattleBlocksGame {
                             previousPlayerMoves[coordinates.y][coordinates.x] = MoveState.hit
                             if (self.data.increaseHitCount(player: previousPlayer!)) {
                                 // Game Over
-                                emit GameOver(
-                                    gameID: self.id,
-                                    playerA: self.data.playerA,
-                                    playerB: self.data.playerB!,
-                                    winner: self.data.winner,
-                                    playerHitCount: self.data.playerHitCount
-                                )
+                                self.completeMatch()
                             } 
                         } else {
                             previousPlayerMoves[coordinates.y][coordinates.x] = MoveState.miss
@@ -453,12 +437,42 @@ pub contract BattleBlocksGame {
             // Guess
             self.data.playerGuess(player: playerAddress, guess: coordinates)  
 
-            emit Moved(
+            emit PlayerMoved(
                 gameID: self.id,
                 gamePlayerID: gamePlayerIDRef.id,
                 playerAddress: playerAddress,
                 coordinateX: coordinates.x,
                 coordinateY: coordinates.y
+                )
+        }
+
+        access(contract) fun completeMatch() {
+            pre {
+                self.data.gameState == GameState.completed : "The game has to be completed"
+                self.data.winner != nil : "The game needs to have a winner"
+            }
+            
+            // Send rewards
+            let winnerFlowReciever = getAccount(self.data.winner!)
+                .getCapability(/public/flowTokenReceiver)
+                .borrow<&{FungibleToken.Receiver}>()
+                ?? panic("Could not borrow receiver reference to the recipient's Vault")
+            let prizeVault: @FlowToken.Vault <- self.prizePool <- FlowToken.createEmptyVault() as! @FlowToken.Vault
+            winnerFlowReciever.deposit(from: <- prizeVault)
+
+            // Delete game from storage
+            let gameStoragePath = BattleBlocksGame.getGameStoragePath(self.id)
+            let completedGame <- BattleBlocksGame.account.load<@Game>(from: gameStoragePath)
+
+            destroy completedGame
+
+            // Send event
+            emit GameEnded(
+                gameID: self.id,
+                playerA: self.data.playerA,
+                playerB: self.data.playerB!,
+                winner: self.data.winner,
+                playerHitCount: self.data.playerHitCount
                 )
         }
 
@@ -628,7 +642,7 @@ pub contract BattleBlocksGame {
             self.playerCapabilities.insert(key: newGameID, playerActionsCap)
             self.gameCapabilities.remove(key: newGameID)
 
-            emit NewGameCreated(
+            emit GameCreated(
                 gameID: newGameID,
                 creatorID: self.id,
                 creatorAddress: self.owner?.address!,
@@ -673,7 +687,7 @@ pub contract BattleBlocksGame {
             }
 
             self.gameCapabilities.insert(key: gameID, cap)
-            emit PlayerAddedToGame(gameID: gameID, addedPlayerID: self.id)
+            emit PlayerAdded(gameID: gameID, addedPlayerID: self.id)
         }
     }
 
