@@ -1,5 +1,7 @@
 import NonFungibleToken from "../../../contracts/standard/NonFungibleToken.cdc"
 import BattleBlocksNFT from "../../../contracts/nft/BattleBlocksNFT.cdc"
+import FungibleToken from "../../../contracts/standard/FungibleToken.cdc"
+import MetadataViews from "../../../contracts/standard/MetadataViews.cdc"
 
 /// This script uses the NFTMinter resource to mint a new NFT
 /// It must be run with the account that has the minter resource
@@ -8,6 +10,8 @@ import BattleBlocksNFT from "../../../contracts/nft/BattleBlocksNFT.cdc"
 transaction(
     recipient: Address,
     name: String,
+    description: String,
+    thumbnail: String,
     metdata: {String: AnyStruct}
 ) {
 
@@ -19,6 +23,15 @@ transaction(
 
     /// Previous NFT ID before the transaction executes
     let mintingIDBefore: UInt64
+
+    /// Reference to the fungible token receiver
+    let recipientFungibleTokenReciever: &{FungibleToken.Receiver}
+
+    /// Reference to the admin fungible token provider
+    let senderFungibleTokenProvider: &{FungibleToken.Provider}
+
+    /// Storage amount for a single NFT
+    let transferAmount: UFix64
 
     prepare(signer: AuthAccount) {
         self.mintingIDBefore = BattleBlocksNFT.totalSupply
@@ -32,15 +45,36 @@ transaction(
             .getCapability(BattleBlocksNFT.CollectionPublicPath)
             .borrow<&{NonFungibleToken.CollectionPublic}>()
             ?? panic("Could not get receiver reference to the NFT Collection")
+
+        // amount needed for nft storage
+        self.transferAmount = 0.00002;
+
+        // get the recipients public account object
+        let recipient = getAccount(recipient)
+
+        // borrow a public reference to the receivers Flow Token receiver capability
+        self.recipientFungibleTokenReciever = recipient.getCapability<&{FungibleToken.Receiver}>(/public/flowTokenReceiver)
+                .borrow()
+                ?? panic("Could not borrow a reference to the recipient's fungible token reciever")
+
+        // reference to the admins' fungible token provider
+        self.senderFungibleTokenProvider = signer
+            .borrow<&{FungibleToken.Provider}>(from: /storage/flowTokenVault)
+            ?? panic("Could not borrow a reference to the owner's fungible token provider")
     }
 
     execute {
+        // Withdraw the FLOW from admin
+        let transferVault <- self.senderFungibleTokenProvider.withdraw(amount: self.transferAmount)
         
+        // Deposit FLOW to user
+        self.recipientFungibleTokenReciever.deposit(from: <- transferVault)
+
         // Mint the NFT and deposit it to the recipient's collection
         self.minter.mintNFT(
             recipient: self.recipientCollectionRef,
             name: name
-        )
+            )
     }
 
     post {
@@ -48,4 +82,3 @@ transaction(
         BattleBlocksNFT.totalSupply == self.mintingIDBefore + 1: "The total supply should have been increased by 1"
     }
 }
- 
