@@ -270,28 +270,16 @@ pub contract BattleBlocksGame {
     pub resource interface DelegatedGamePlayer {
         pub let id: UInt64
         pub fun getGamePlayerIDRef(): &{GamePlayerID}
-        pub fun getMatchesInLobby(): [UInt64]
-        pub fun getMatchesInPlay(): [UInt64]
-        pub fun getMatchLobbyCaps(): {UInt64: Capability<&{GameActions}>}
-        pub fun getMatchPlayerCaps(): {UInt64: Capability<&{PlayerActions}>}
-        pub fun deleteLobbyActionsCapability(matchID: UInt64)
-        pub fun deletePlayerActionsCapability(matchID: UInt64)
-        pub fun createMatch(
-            multiPlayer: Bool,
-            matchTimeLimit: UFix64,
-            nft: @AnyResource{NonFungibleToken.INFT},
-            receiverCap: Capability<&{NonFungibleToken.Receiver}>
-        ): UInt64
-        pub fun signUpForMatch(matchID: UInt64)
-        pub fun depositNFTToMatchEscrow(
-            nft: @AnyResource{NonFungibleToken.INFT, DynamicNFT.Dynamic},
-            matchID: UInt64,
-            receiverCap: Capability<&{NonFungibleToken.Receiver}>
-        )
-        pub fun submitMoveToMatch(matchID: UInt64, move: Moves)
-        pub fun addPlayerToMatch(matchID: UInt64, gamePlayerRef: &AnyResource{GamePlayerPublic})
-        pub fun resolveMatchByID(_ id: UInt64)
-        pub fun addMatchLobbyActionsCapability(matchID: UInt64, _ cap: Capability<&{MatchLobbyActions}>)
+        pub fun getGames(): [UInt64]
+        pub fun getPlayers(): [UInt64]
+        pub fun getGameCapabilities(): {UInt64: Capability<&{GameActions}>}
+        pub fun getPlayerCapabilities(): {UInt64: Capability<&{PlayerActions}>}
+        pub fun deleteGameActionsCapability(gameID: UInt64) 
+        pub fun deletePlayerActionsCapability(gameID: UInt64)
+        pub fun createMatch(wager: @FlowToken.Vault, playerAMerkleRoot: [UInt8]): UInt64
+        pub fun submitMoveToGame(gameID: UInt64, coordinates: Coordinates, proof: [[UInt8]]?, reveal: Reveal?) 
+        pub fun addPlayerToGame(gameID: UInt64, gamePlayerRef: &AnyResource{GamePlayerPublic}) 
+        pub fun addGameActionsCapability(gameID: UInt64, _ cap: Capability<&{GameActions}>)
     }
 
     //--------------------//
@@ -550,7 +538,7 @@ pub contract BattleBlocksGame {
         }
     }
 
-    pub resource GamePlayer : GamePlayerID, GamePlayerPublic {
+    pub resource GamePlayer : GamePlayerID, GamePlayerPublic, DelegatedGamePlayer {
         pub let id: UInt64
         access(self) let gameCapabilities: {UInt64: Capability<&{GameActions}>}
         access(self) let playerCapabilities: {UInt64: Capability<&{PlayerActions}>}
@@ -577,16 +565,16 @@ pub contract BattleBlocksGame {
             return self.gameCapabilities
         }
 
-        pub fun getPlayerCapibilities(): {UInt64: Capability<&{PlayerActions}>} {
+        pub fun getPlayerCapabilities(): {UInt64: Capability<&{PlayerActions}>} {
             return self.playerCapabilities
         }
 
-        pub fun deleteGameActionsCapability(matchID: UInt64) {
-            self.gameCapabilities.remove(key: matchID)
+        pub fun deleteGameActionsCapability(gameID: UInt64) {
+            self.gameCapabilities.remove(key: gameID)
         }
 
-        pub fun deletePlayerActionsCapability(matchID: UInt64) {
-            self.playerCapabilities.remove(key: matchID)
+        pub fun deletePlayerActionsCapability(gameID: UInt64) {
+            self.playerCapabilities.remove(key: gameID)
         }
 
         pub fun createMatch(wager: @FlowToken.Vault, playerAMerkleRoot: [UInt8]): UInt64 {
@@ -605,7 +593,7 @@ pub contract BattleBlocksGame {
             let newGameID = newGame.id
             
             // Derive paths using matchID
-            let gameStoragePath = BattleBlocksGame.getMatchStoragePath(newGameID)
+            let gameStoragePath = BattleBlocksGame.getGameStoragePath(newGameID)
             let gamePrivatePath = BattleBlocksGame.getGamePrivatePath(newGameID)
             
             // Save the match to game contract account's storage
