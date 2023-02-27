@@ -52,6 +52,12 @@
       "aliases": {
         "testnet": "0xf95724cf2202cd00"
       }
+    },
+    "BattleBlocksGame": {
+      "source": "./cadence/contracts/game/BattleBlocksGame.cdc",
+      "aliases": {
+        "testnet": "0xf95724cf2202cd00"
+      }
     }
   },
   "accounts": {
@@ -68,7 +74,7 @@
   },
   "deployments": {
     "testnet": {
-      "admin-testnet": ["BattleBlocksNFT", "BattleBlocksAccounts"]
+      "admin-testnet": ["BattleBlocksNFT", "BattleBlocksAccounts", "BattleBlocksGame"]
     }
   }
 }

@@ -1,5 +1,6 @@
 import BattleBlocksAccounts from "../../../contracts/accounts/BattleBlocksAccounts.cdc"
 import BattleBlocksNFT from "../../../contracts/nft/BattleBlocksNFT.cdc"
+import BattleBlocksGame from "../../../contracts/game/BattleBlocksGame.cdc"
 import FungibleToken from "../../../contracts/standard/FungibleToken.cdc"
 import NonFungibleToken from "../../../contracts/standard/NonFungibleToken.cdc"
 
@@ -46,6 +47,28 @@ transaction(
                 target: BattleBlocksNFT.CollectionStoragePath
             )
 
+        /* --- Set user up with GamePlayer in new account --- */
+        //
+        // Create GamePlayer resource
+        let gamePlayer <- BattleBlocksGame.createGamePlayer()
+        // Save it
+        newAccount.save(<-gamePlayer, to: BattleBlocksGame.GamePlayerStoragePath)
+        // Link GamePlayerPublic Capability so player can be added to Matches
+        newAccount.link<&{
+            BattleBlocksGame.GamePlayerPublic
+        }>(
+            BattleBlocksGame.GamePlayerPublicPath,
+            target: BattleBlocksGame.GamePlayerStoragePath
+        )
+        // Link GamePlayerID Capability
+        newAccount.link<&{
+            BattleBlocksGame.DelegatedGamePlayer,
+            BattleBlocksGame.GamePlayerID
+        }>(
+            BattleBlocksGame.GamePlayerPrivatePath,
+            target: BattleBlocksGame.GamePlayerStoragePath
+        )        
+    
         // Link the Provider Capability in private storage
         newAccount.link<
             &BattleBlocksNFT.Collection{NonFungibleToken.Provider}
@@ -53,6 +76,5 @@ transaction(
             BattleBlocksNFT.ProviderPrivatePath,
             target: BattleBlocksNFT.CollectionStoragePath
         )
-
     }
 }
