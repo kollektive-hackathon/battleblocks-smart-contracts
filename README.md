@@ -31,6 +31,7 @@ The contracts in this repository are written in Cadence, the programming languag
 | FlowToken            | 0x7e60df042a9c0868 | Testnet     |
 | BattleBlocksNFT      | 0xf95724cf2202cd00 | Testnet     |
 | BattleBlocksAccounts | 0xf95724cf2202cd00 | Testnet     |
+| BattleBlocksGame     | 0xf95724cf2202cd00 | Testnet     |
 
 ## License
 
