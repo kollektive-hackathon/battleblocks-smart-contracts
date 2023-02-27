@@ -25,6 +25,7 @@ pub contract BattleBlocksGame {
         creatorID: UInt64,
         creatorAddress: Address,
         wager: UFix64,
+        payload: UInt64,
         )
 
     pub event GameEnded (
@@ -273,7 +274,7 @@ pub contract BattleBlocksGame {
         pub fun getPlayerCapabilities(): {UInt64: Capability<&{PlayerActions}>}
         pub fun deleteGameActionsCapability(gameID: UInt64) 
         pub fun deletePlayerActionsCapability(gameID: UInt64)
-        pub fun createGame(wager: @FlowToken.Vault, merkleRoot: [UInt8]): UInt64
+        pub fun createGame(wager: @FlowToken.Vault, merkleRoot: [UInt8], payload: UInt64): UInt64
         pub fun joinGame(wager: @FlowToken.Vault, merkleRoot: [UInt8], gameID: UInt64) 
         pub fun submitMoveToGame(gameID: UInt64, coordinates: Coordinates, proof: [[UInt8]]?, reveal: Reveal?) 
         pub fun signUpForGame(gameID: UInt64)
@@ -609,7 +610,7 @@ pub contract BattleBlocksGame {
             self.playerCapabilities.remove(key: gameID)
         }
 
-        pub fun createGame(wager: @FlowToken.Vault, merkleRoot: [UInt8]): UInt64 {
+        pub fun createGame(wager: @FlowToken.Vault, merkleRoot: [UInt8], payload: UInt64): UInt64 {
             let gamePlayerIDRef = self.getGamePlayerIDRef()
 
             let stake = wager.balance
@@ -661,6 +662,7 @@ pub contract BattleBlocksGame {
                 creatorID: self.id,
                 creatorAddress: self.owner?.address!,
                 wager: stake,
+                payload: payload
             )
 
             return newGameID
