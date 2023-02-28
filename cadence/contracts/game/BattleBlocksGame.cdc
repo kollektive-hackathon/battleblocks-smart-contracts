@@ -677,8 +677,8 @@ pub contract BattleBlocksGame {
             post {
                 self.playerCapabilities.containsKey(gameID):
                     "PlayerActions Capability not successfully added!"
-                !self.playerCapabilities.containsKey(gameID) &&
-                self.gameCapabilities.containsKey(gameID):
+                !self.gameCapabilities.containsKey(gameID) &&
+                self.playerCapabilities.containsKey(gameID):
                     "GamePlayer does not have the Capability to play this Game!"
             }
             
