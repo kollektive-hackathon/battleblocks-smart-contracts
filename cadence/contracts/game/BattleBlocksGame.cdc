@@ -317,8 +317,8 @@ pub contract BattleBlocksGame {
                     "Player has already joined this Game!"
                 wager.balance == self.data.wager:
                     "Invalid wager amount!"
-                self.prizePool.balance == self.data.wager * 2.0:
-                    "Prize pool has alpending been filled"
+                self.prizePool.balance != self.data.wager * 2.0:
+                    "Prize pool has already been filled"
                 self.data.gameState == GameState.pending:
                     "Game already started!"
             }
