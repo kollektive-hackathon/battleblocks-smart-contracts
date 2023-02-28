@@ -172,7 +172,7 @@ pub contract BattleBlocksGame {
             self.playerA = playerA
         }
 
-        access(contract) fun setPlayerBMerkpleRoot(_ playerBMerkleRoot: [UInt8]) {
+        access(contract) fun setPlayerBMerkleRoot(_ playerBMerkleRoot: [UInt8]) {
             self.playerBMerkleRoot = playerBMerkleRoot
         }
 
@@ -313,7 +313,9 @@ pub contract BattleBlocksGame {
 
         pub fun joinGame(wager: @FlowToken.Vault, merkleRoot: [UInt8], gamePlayerIDRef: &{GamePlayerID}): Capability<&{PlayerActions}> {
             pre {
-                (self.data.playerA == gamePlayerIDRef.owner?.address || self.data.playerB == gamePlayerIDRef.owner?.address):
+                gamePlayerIDRef.owner?.address != nil:
+                    "GamePlayerID can't be nil"
+                !((self.data.playerA != gamePlayerIDRef.owner?.address) && (self.data.playerB != nil)) || ((self.data.playerA == gamePlayerIDRef.owner?.address) && (self.gamePlayerIDs.containsKey(1) == false)):
                     "Player has already joined this Game!"
                 wager.balance == self.data.wager:
                     "Invalid wager amount!"
@@ -346,12 +348,11 @@ pub contract BattleBlocksGame {
             if (playerAddress == self.data.playerA) {
                 playerIndex = TurnState.playerA.rawValue
                 self.data.setPlayerA(gamePlayerIDRef.owner?.address!)
-            } else if (playerAddress == self.data.playerB) {
+            } else {
                 playerIndex = TurnState.playerB.rawValue
                 self.data.setPlayerB(gamePlayerIDRef.owner?.address!)
+                self.data.setPlayerBMerkleRoot(merkleRoot)
                 self.data.setTurn(TurnState.playerA)
-            } else {
-                panic ("Invalid player address")
             }
             
             self.prizePool.deposit(from: <- wager)
