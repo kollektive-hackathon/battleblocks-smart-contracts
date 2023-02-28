@@ -313,7 +313,7 @@ pub contract BattleBlocksGame {
 
         pub fun joinGame(wager: @FlowToken.Vault, merkleRoot: [UInt8], gamePlayerIDRef: &{GamePlayerID}): Capability<&{PlayerActions}> {
             pre {
-                !(self.data.playerA == gamePlayerIDRef.owner?.address || self.data.playerB == gamePlayerIDRef.owner?.address):
+                (self.data.playerA == gamePlayerIDRef.owner?.address || self.data.playerB == gamePlayerIDRef.owner?.address):
                     "Player has already joined this Game!"
                 wager.balance == self.data.wager:
                     "Invalid wager amount!"

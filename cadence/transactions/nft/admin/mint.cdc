@@ -10,9 +10,7 @@ import MetadataViews from "../../../contracts/standard/MetadataViews.cdc"
 transaction(
     recipient: Address,
     name: String,
-    description: String,
-    thumbnail: String,
-    metdata: {String: AnyStruct}
+    metdata: {String: String}
 ) {
 
     /// local variable for storing the minter reference
@@ -66,7 +64,7 @@ transaction(
     execute {
         // Withdraw the FLOW from admin
         let transferVault <- self.senderFungibleTokenProvider.withdraw(amount: self.transferAmount)
-        
+
         // Deposit FLOW to user
         self.recipientFungibleTokenReciever.deposit(from: <- transferVault)
 
