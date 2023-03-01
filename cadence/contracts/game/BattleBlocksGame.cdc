@@ -55,6 +55,13 @@ pub contract BattleBlocksGame {
         addedPlayerID: UInt64
         )
 
+    pub event BlockRevealed(
+        gameID: UInt64,
+        coordinateX: UInt64,
+        coordinateY: UInt64,
+        reveal: String
+    )
+
     pub event PlayerSignedUp(
         gameID: UInt64, 
         addedPlayerID: UInt64
@@ -65,7 +72,8 @@ pub contract BattleBlocksGame {
         gamePlayerID: UInt64,
         playerAddress: Address,
         coordinateX: UInt64,
-        coordinateY: UInt64
+        coordinateY: UInt64,
+        turn: UInt8
         )
 
     //----------------//
@@ -446,7 +454,7 @@ pub contract BattleBlocksGame {
             // Move
             self.data.setPlayerMove(player: playerAddress, move: MoveState.pending, coordinates: coordinates)
 
-            if (self.data.playerGuesses[playerAddress]?.length == nil || self.data.playerMoves[playerAddress]?.length == nil) {
+            if (self.data.playerGuesses[playerAddress]?.length != nil && self.data.playerMoves[playerAddress]?.length != nil) {
                 // Not First
 
                 // Proof for Last Guess
@@ -460,6 +468,7 @@ pub contract BattleBlocksGame {
                         if (reveal!.guess.isBlock) {
                             // Hit
                             self.data.setPlayerMove(player: previousPlayer!, move: MoveState.hit, coordinates: coordinates)
+                            emit BlockRevealed(gameID: self.id, coordinateX:  guessCoordinates.x, coordinateY: guessCoordinates.y, reveal: "hit" )
                             if (self.data.increaseHitCount(player: previousPlayer!)) {
                                 // Game Over
                                 self.completeMatch()
@@ -467,6 +476,7 @@ pub contract BattleBlocksGame {
                         } else {
                             // Miss
                             self.data.setPlayerMove(player: previousPlayer!, move: MoveState.miss, coordinates: coordinates)
+                            emit BlockRevealed(gameID: self.id, coordinateX:  guessCoordinates.x, coordinateY: guessCoordinates.y, reveal: "miss" )
                         }
                     }
                 }       
@@ -484,7 +494,8 @@ pub contract BattleBlocksGame {
                 gamePlayerID: gamePlayerIDRef.id,
                 playerAddress: playerAddress,
                 coordinateX: coordinates.x,
-                coordinateY: coordinates.y
+                coordinateY: coordinates.y,
+                turn: self.data.turn.rawValue
                 )
         }
 
