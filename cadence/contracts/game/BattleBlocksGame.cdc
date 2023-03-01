@@ -59,6 +59,7 @@ pub contract BattleBlocksGame {
         gameID: UInt64,
         coordinateX: UInt64,
         coordinateY: UInt64,
+        blockOwner: Address?,
         reveal: String
     )
 
@@ -468,7 +469,7 @@ pub contract BattleBlocksGame {
                         if (reveal!.guess.isBlock) {
                             // Hit
                             self.data.setPlayerMove(player: previousPlayer!, move: MoveState.hit, coordinates: coordinates)
-                            emit BlockRevealed(gameID: self.id, coordinateX:  guessCoordinates.x, coordinateY: guessCoordinates.y, reveal: "hit" )
+                            emit BlockRevealed(gameID: self.id, coordinateX:  guessCoordinates.x, coordinateY: guessCoordinates.y, blockOwner: previousPlayer, reveal: "hit",  )
                             if (self.data.increaseHitCount(player: previousPlayer!)) {
                                 // Game Over
                                 self.completeMatch()
@@ -476,7 +477,7 @@ pub contract BattleBlocksGame {
                         } else {
                             // Miss
                             self.data.setPlayerMove(player: previousPlayer!, move: MoveState.miss, coordinates: coordinates)
-                            emit BlockRevealed(gameID: self.id, coordinateX:  guessCoordinates.x, coordinateY: guessCoordinates.y, reveal: "miss" )
+                            emit BlockRevealed(gameID: self.id, coordinateX:  guessCoordinates.x, coordinateY: guessCoordinates.y, blockOwner: previousPlayer, reveal: "miss")
                         }
                     }
                 }       
