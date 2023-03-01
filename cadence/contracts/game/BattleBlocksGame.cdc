@@ -454,7 +454,7 @@ pub contract BattleBlocksGame {
             // Move
             self.data.setPlayerMove(player: playerAddress, move: MoveState.pending, coordinates: coordinates)
 
-            if (self.data.playerGuesses[playerAddress]?.length != nil && self.data.playerMoves[playerAddress]?.length != nil) {
+            if (self.data.playerGuesses[self.data.playerA]?.length != nil || self.data.playerGuesses[self.data.playerB!]?.length != nil) {
                 // Not First
 
                 // Proof for Last Guess
