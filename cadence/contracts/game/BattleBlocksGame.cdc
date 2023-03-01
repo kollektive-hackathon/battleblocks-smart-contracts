@@ -184,6 +184,14 @@ pub contract BattleBlocksGame {
             self.playerMoves[player] = moves
         }
 
+        access(contract) fun setPlayerMove (player: Address, move: MoveState, coordinates: Coordinates) {
+            let xAxis = self.playerMoves[player]![coordinates.y]
+            xAxis.insert(at: coordinates.x, move)
+            xAxis.remove(at: coordinates.x + 1)
+            self.playerMoves[player]!.insert(at: coordinates.y, xAxis)
+            self.playerMoves[player]!.remove(at: coordinates.y+1)
+        }
+
         access(contract) fun playerGuess (player: Address, guess: Coordinates){
             if (self.playerGuesses[player] != nil ) {
                 self.playerGuesses[player]!.append(guess)
@@ -345,15 +353,33 @@ pub contract BattleBlocksGame {
 
             var playerIndex: UInt8 = 0
 
+            var emptyXAxis: [MoveState] = []
+            let emptyPlayerMoves: [[MoveState]] = [[]]
+
+            var i = 0
+            while i < 10 {
+                emptyXAxis.append(MoveState.unkown)
+                i = i + 1
+            }
+
+            var j: Int = 0
+            while j < 10 {
+                emptyPlayerMoves.appendAll([emptyXAxis])
+                j = j + 1
+            }
+
             if (playerAddress == self.data.playerA) {
                 playerIndex = TurnState.playerA.rawValue
                 self.data.setPlayerA(gamePlayerIDRef.owner?.address!)
+      
             } else {
                 playerIndex = TurnState.playerB.rawValue
                 self.data.setPlayerB(gamePlayerIDRef.owner?.address!)
                 self.data.setPlayerBMerkleRoot(merkleRoot)
                 self.data.setTurn(TurnState.playerA)
             }
+
+            self.data.setPlayerMoves(player: playerAddress, moves: emptyPlayerMoves)
             
             self.prizePool.deposit(from: <- wager)
 
@@ -418,11 +444,9 @@ pub contract BattleBlocksGame {
             }
 
             // Move
-            let playerMoves:[[MoveState]] = self.data.playerMoves[playerAddress] == nil ? [[]] : self.data.playerMoves[playerAddress]!
-            playerMoves[coordinates.y][coordinates.x] = MoveState.pending
-            self.data.setPlayerMoves(player: playerAddress, moves: playerMoves)
+            self.data.setPlayerMove(player: playerAddress, move: MoveState.pending, coordinates: coordinates)
 
-            if !(self.data.playerMoves[self.data.playerMoves.keys[0]]?.length != nil && self.data.playerMoves[self.data.playerMoves.keys[1]]?.length != nil) {
+            if (self.data.playerGuesses[playerAddress]?.length == nil || self.data.playerMoves[playerAddress]?.length == nil) {
                 // Not First
 
                 // Proof for Last Guess
@@ -433,15 +457,16 @@ pub contract BattleBlocksGame {
                     if !(self.proveGuess(playerMerkleRoot: currentPlayerMerkleRoot, proof: proof!, reveal: reveal!)) {
                         panic ("Failed prooving guess")
                     } else {
-                        let previousPlayerMoves:[[MoveState]] = self.data.playerMoves[previousPlayer!] == nil ? [[]] : self.data.playerMoves[previousPlayer!]!
                         if (reveal!.guess.isBlock) {
-                            previousPlayerMoves[coordinates.y][coordinates.x] = MoveState.hit
+                            // Hit
+                            self.data.setPlayerMove(player: previousPlayer!, move: MoveState.hit, coordinates: coordinates)
                             if (self.data.increaseHitCount(player: previousPlayer!)) {
                                 // Game Over
                                 self.completeMatch()
                             } 
                         } else {
-                            previousPlayerMoves[coordinates.y][coordinates.x] = MoveState.miss
+                            // Miss
+                            self.data.setPlayerMove(player: previousPlayer!, move: MoveState.miss, coordinates: coordinates)
                         }
                     }
                 }       
