@@ -464,7 +464,7 @@ pub contract BattleBlocksGame {
                     panic ("Invalid coordinates revealed")
                 } else {
                     if !(self.proveGuess(playerMerkleRoot: currentPlayerMerkleRoot, proof: proof!, reveal: reveal!)) {
-                        panic ("Failed prooving guess")
+                        panic ("Failed proving guess")
                     } else {
                         if (reveal!.guess.isBlock) {
                             // Hit
@@ -488,7 +488,7 @@ pub contract BattleBlocksGame {
             }
 
             // Guess
-            self.data.playerGuess(player: playerAddress, guess: coordinates)  
+            self.data.playerGuess(player: playerAddress, guess: coordinates)
 
             emit PlayerMoved(
                 gameID: self.id,
@@ -534,7 +534,7 @@ pub contract BattleBlocksGame {
         }
 
         priv fun proveGuess(playerMerkleRoot: [UInt8], proof: [[UInt8]], reveal: Reveal): Bool {
-            let leaf = HashAlgorithm.KECCAK_256.hash((String.encodeHex(reveal.toString().utf8).utf8))
+            let leaf = HashAlgorithm.KECCAK_256.hash((reveal.toString().utf8))
             return self.verifyProof(proof: proof, root: playerMerkleRoot, leaf: leaf)
         }
 
