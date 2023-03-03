@@ -188,6 +188,11 @@ pub contract BattleBlocksGame {
         access(contract) fun setTurn(_ nextTurn: TurnState){
             self.turn = nextTurn
         }
+
+        access(contract) fun setGameState(_ gameState: GameState){
+            self.gameState = gameState
+        }
+        
         
         access(contract) fun setPlayerMoves (player: Address, moves: [[MoveState]]) {
             self.playerMoves[player] = moves
@@ -516,6 +521,8 @@ pub contract BattleBlocksGame {
 
             // Set Turn
             self.data.setTurn(TurnState.inactive)
+
+            self.data.setGameState(GameState.completed)
 
             // Send event
             emit GameEnded(
