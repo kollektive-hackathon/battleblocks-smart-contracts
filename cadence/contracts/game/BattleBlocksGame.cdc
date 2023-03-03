@@ -522,8 +522,6 @@ pub contract BattleBlocksGame {
             // Set Turn
             self.data.setTurn(TurnState.inactive)
 
-            self.data.setGameState(GameState.completed)
-
             // Send event
             emit GameEnded(
                 gameID: self.id,
@@ -609,7 +607,7 @@ pub contract BattleBlocksGame {
 
         destroy() {
             pre {
-                self.data.gameState != GameState.completed: 
+                self.data.gameState == GameState.completed: 
                     "Cannot destroy while Gatch is still in play!"
             }
             destroy self.prizePool
